@@ -62,7 +62,7 @@ func NewWorld(n int, policyPrice int64) *World {
 
 	start := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
 	w.Slot0 = beacon.NextSlot(beacon.RoundAt(w.Info, start), SlotRounds)
-	r0 := w.Slot0 - 5
+	r0 := w.Slot0 - SlotRounds
 	periodStart := beacon.Time(w.Info, r0).Add(-time.Second)
 	periodEnd := beacon.Time(w.Info, w.Slot0+uint64(n-1)*SlotRounds)
 
@@ -118,7 +118,7 @@ func (f *fakeCounters) Read() (pocc.Usage, error) {
 	return f.u, nil
 }
 
-// Run boots an agent 15 s before the first slot and beats n slots. Slots for
+// Run boots an agent on the slot before the first slot and beats n slots. Slots for
 // which skip returns true get no heartbeat (the agent is paused). The last
 // slot carries the final heartbeat. It returns the agent's public key.
 func (w *World) Run(n int, skip func(i int) bool) (string, error) {
@@ -127,9 +127,12 @@ func (w *World) Run(n int, skip func(i int) bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	r0 := w.Slot0 - 5
-	w.Clock = beacon.Time(w.Info, r0).Add(2 * time.Second)
+	r0 := w.Slot0 - SlotRounds
+	w.Clock = beacon.Time(w.Info, r0).Add(w.AnchorDelay(r0))
 	if _, err := a.Boot(ctx, r0); err != nil {
+		return "", err
+	}
+	if err := w.Notary.CloseBatch(ctx, r0); err != nil {
 		return "", err
 	}
 	for i := 0; i < n; i++ {

@@ -83,6 +83,7 @@ func Verify(ctx context.Context, R *pocc.Receipt, env Env) pocc.Verdict {
 	b := R.Boot
 	agentPub, err := pocc.DecodePub(b.AgentPubKey)
 	c.check(err == nil, "E_BIND")
+	c.check(b.Round%slot == 0, "E_SCHEDULE")
 	r0, err := env.Beacon.Get(ctx, b.Round)
 	c.check(err == nil && b.Randomness == pocc.Hex(r0.Randomness), "E_BEACON")
 	gpuID := ""

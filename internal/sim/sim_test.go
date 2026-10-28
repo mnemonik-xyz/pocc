@@ -10,10 +10,10 @@ import (
 	"github.com/mnemonik-xyz/pocc/pkg/verify"
 )
 
-const slots = 481 // 8 h: boot 15 s before slot 0, then 480 intervals
+const slots = 480 // 8 h: boot on a slot, then 480 heartbeats
 
-// fullCredit is 15 s (boot to first slot) plus 480 slot intervals of 60 s.
-const fullCredit = 15 + (slots-1)*60
+// fullCredit is 480 slot intervals of 60 s.
+const fullCredit = slots * 60
 
 func run(t *testing.T, w *World, skip func(int) bool, billed int64) *pocc.Receipt {
 	t.Helper()
@@ -49,7 +49,7 @@ func TestT1HappyPath(t *testing.T) {
 	if v.CreditedS != fullCredit || v.Assurance != "L0" {
 		t.Fatalf("credited %d assurance %s, want %d L0", v.CreditedS, v.Assurance, fullCredit)
 	}
-	if v.Disclosed["481/cpu_ms"] != 481*30_000 {
+	if v.Disclosed["480/cpu_ms"] != 480*30_000 {
 		t.Fatalf("disclosed cpu_ms %v", v.Disclosed)
 	}
 	recs, err := w.Meter(R, v)

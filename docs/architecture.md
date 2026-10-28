@@ -129,7 +129,7 @@ sequenceDiagram
     T->>W: fund escrow: offer(policyHash, deliverySpecHash, ceiling)
     P->>A: create server (Nova), h0 in config drive
 
-    A->>D: latest round r0
+    A->>D: next slot round r0
     A->>A: new agent key + seed, e0 = H(h0, server, key, r0, rand0, seed_enc)
     A->>N: boot proof (seq 0)
     loop every slot (rounds divisible by 20, 60 s)
@@ -188,7 +188,7 @@ length-prefixed (see [deviations](#8-deviations-from-the-spec)).
 | Notary leaf | `H(entry, agent_pk, seq, e)` | `pkg/pocc/chain.go` |
 | Batch tree | RFC 9162 Merkle tree and inclusion proofs | `pkg/pocc/merkle.go` |
 | Seed sealing | X25519 + HKDF-SHA256 + AES-256-GCM, to tenant and provider | `pkg/pocc/seal.go` |
-| Credit | consecutive slots only: `(r_i − r_{i−1}) × 3 s`; a gap earns nothing | `pkg/verify/verify.go` |
+| Credit | the boot and every heartbeat sit on 60 s slots; each pair of consecutive slots earns 60 s, a gap and the interval across it earn nothing | `pkg/verify/verify.go` |
 
 ## 7. Repository layout and status
 
@@ -200,9 +200,10 @@ length-prefixed (see [deviations](#8-deviations-from-the-spec)).
 | `pkg/anchor` | Anchor interfaces; signed-file dev anchor | Done; chain anchor planned |
 | `pkg/notary` | Entry intake, per-slot batches, proofs, HTTP API | Done |
 | `pkg/verify` | Verifier (spec 5) with policy checks, hourly usage records | Done |
-| `pkg/agent` | Boot proof, heartbeat loop, counters, final heartbeat | In progress |
-| `cmd/*` | `pocc-agent`, `pocc-notary`, `pocc-verify`, `pocc-broker` | In progress |
-| `internal/sim` | Simulated end-to-end acceptance tests T1–T9 | Planned next |
+| `pkg/agent` | Boot proof, heartbeat loop, counters, final heartbeat | Done |
+| `cmd/*` | `pocc-agent`, `pocc-notary`, `pocc-verify`, `pocc-broker` | Done; smoke-tested locally against real drand |
+| `internal/sim` | Simulated acceptance tests T1, T3, T4, T6–T9 plus Stage 0 checks | Done |
+| `pkg/openstack` | Minimal OpenStack client for the broker | Done; not yet run on amnezia.cloud |
 
 ## 8. Deviations from the spec
 

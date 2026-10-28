@@ -81,8 +81,16 @@ func New(req pocc.Request, order pocc.Order, serverID string, b beacon.Source, c
 // AgentPubKey returns the agent's public key after Boot.
 func (a *Agent) AgentPubKey() string { return a.pub }
 
-// Boot creates the agent key and seed and submits the boot proof for round r0.
+// Boot creates the agent key and seed and submits the boot proof for slot
+// round r0. Booting on a slot gives the boot proof the same anchoring bracket
+// as every heartbeat, and makes every credited interval exactly one slot.
 func (a *Agent) Boot(ctx context.Context, r0 uint64) (pocc.BootProof, error) {
+	if a.Request.Attestation != pocc.AttestationNone {
+		return pocc.BootProof{}, fmt.Errorf("attestation %q is not supported by this build", a.Request.Attestation)
+	}
+	if r0%uint64(a.Order.SlotRounds) != 0 {
+		return pocc.BootProof{}, fmt.Errorf("boot round %d is not a slot", r0)
+	}
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return pocc.BootProof{}, err
@@ -104,9 +112,6 @@ func (a *Agent) Boot(ctx context.Context, r0 uint64) (pocc.BootProof, error) {
 		OrderHash: pocc.Hex(a.h0), ServerID: a.ServerID, AgentPubKey: pocc.B64.EncodeToString(pub),
 		Round: r0, Randomness: pocc.Hex(rnd.Randomness), SeedEnc: seedEnc,
 		Attestation: a.Request.Attestation, E0: pocc.Hex(e0), Sig: pocc.SignRaw(priv, e0),
-	}
-	if a.Request.Attestation != pocc.AttestationNone {
-		return pocc.BootProof{}, fmt.Errorf("attestation %q is not supported by this build", a.Request.Attestation)
 	}
 	entry := pocc.Entry{AgentPubKey: bp.AgentPubKey, Seq: 0, E: bp.E0, Sig: bp.Sig, Boot: &bp}
 	if err := a.Notary.Submit(ctx, entry); err != nil {
@@ -182,7 +187,8 @@ func (a *Agent) Run(ctx context.Context, info pocc.BeaconInfo, stop <-chan struc
 	if err != nil {
 		return fmt.Errorf("period end: %w", err)
 	}
-	r0 := beacon.RoundAt(info, time.Now())
+	r0 := beacon.NextSlot(beacon.RoundAt(info, time.Now()), uint64(a.Order.SlotRounds))
+	a.Logf("waiting for slot %d to boot", r0)
 	if _, err := a.Boot(ctx, r0); err != nil {
 		return err
 	}
