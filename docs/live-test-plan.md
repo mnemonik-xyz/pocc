@@ -1,7 +1,8 @@
 # Live test plan: Stage 0 on amnezia.cloud
 
-Status: first run 2026-10-28, 21:00–22:00 UTC. Results are in
-[`test/live/2026-10-28/`](../test/live/2026-10-28/) once the run ends.
+Status: first run done 2026-10-28, 21:00–22:00 UTC. All six scenarios passed;
+the run found two defects, both fixed. Results and findings:
+[`test/live/2026-10-28/`](../test/live/2026-10-28/README.md).
 Reproduce with [`scripts/live-test.sh`](../scripts/live-test.sh).
 
 ## Goal
@@ -75,7 +76,7 @@ and checked by the verifier.
 |---|---|---|---|
 | L1 | Proof chain on real infrastructure | Boot proof and all heartbeats, real drand, notary anchoring | No `E_BEACON`, `E_CHAIN`, `E_LOG` or `E_BRACKET` |
 | L2 | Provider bills from its own meter | Receipt A: billed seconds = Nova `os-simple-tenant-usage` for the period | `INVALID` with `E_OVERBILL`: Nova counts the build time before boot and the paused time |
-| L3 | Provider stops delivery | Nova `pause` for about 10 minutes mid-period | One gap; the gap and the interval across it earn nothing |
+| L3 | Provider stops delivery | Nova `pause` for about 10 minutes mid-period | One gap; the gap and the interval across it earn nothing. Late heartbeats, if any, earn nothing either |
 | L4 | Honest billing | Receipt B: billed seconds = credited seconds | `VALID_WITH_GAPS`, one signed usage record for 21:00–22:00 |
 | L5 | Policy decides payment | Rule dry run on the usage record | `Deny`: uptime about 7,700 bp is below the 9,500 bp the tenant required |
 | L6 | Settlement | `pocc-broker settle` | Receipt B: `accept`. Receipt A: would be `dispute` with `E_OVERBILL` |

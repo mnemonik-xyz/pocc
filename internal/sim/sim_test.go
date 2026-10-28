@@ -91,18 +91,29 @@ func TestT3Replay(t *testing.T) {
 	expect(t, w.Verify(R), verify.StatusInvalid, "E_SEQ", "E_SCHEDULE")
 }
 
-// T4: one batch held for 60 s before anchoring.
+// T4: one batch held for 60 s before anchoring. The late heartbeat and both
+// intervals touching it earn nothing; billing them is overbilling.
 func TestT4Backdated(t *testing.T) {
-	w := NewWorld(slots, RateMicros)
-	held := w.Slot0 + 200*SlotRounds
-	w.AnchorDelay = func(s uint64) time.Duration {
-		if s == held {
-			return 60 * time.Second
+	held := func(w *World) {
+		slot := w.Slot0 + 200*SlotRounds
+		w.AnchorDelay = func(s uint64) time.Duration {
+			if s == slot {
+				return 60 * time.Second
+			}
+			return 5 * time.Second
 		}
-		return 5 * time.Second
 	}
-	R := run(t, w, nil, fullCredit-60)
-	expect(t, w.Verify(R), verify.StatusInvalid, "E_BRACKET")
+	w := NewWorld(slots, RateMicros)
+	held(w)
+	R := run(t, w, nil, fullCredit-120)
+	v := w.Verify(R)
+	expect(t, v, verify.StatusValidWithGaps)
+	if v.Late != 1 || v.CreditedS != fullCredit-120 {
+		t.Fatalf("late %d credited %d, want 1 and %d", v.Late, v.CreditedS, fullCredit-120)
+	}
+	w2 := NewWorld(slots, RateMicros)
+	held(w2)
+	expect(t, w2.Verify(run(t, w2, nil, fullCredit)), verify.StatusInvalid, "E_OVERBILL")
 }
 
 // T6: billed 600 s more than proven.

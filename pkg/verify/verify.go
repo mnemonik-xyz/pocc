@@ -107,13 +107,24 @@ func Verify(ctx context.Context, R *pocc.Receipt, env Env) pocc.Verdict {
 	}
 	c.check(len(R.Proofs) == len(R.Heartbeats)+1, "E_LOG")
 	bracket := o.BracketS
-	if len(R.Proofs) > 0 {
-		t, err := checkProof(ctx, env, R.Proofs[0], pocc.EntryLeaf(agentPub, 0, e0))
-		c.check(err == nil, "E_LOG")
-		if err == nil {
-			d := t - beacon.Time(info, b.Round).Unix()
-			c.check(d >= 0 && d <= bracket, "E_BRACKET")
+	// timely reports whether an entry was anchored within the bracket after its
+	// round. A late entry earns no credit; an anchor before its round is fatal.
+	timely := func(p pocc.BatchProof, leaf []byte, round uint64) bool {
+		t, err := checkProof(ctx, env, p, leaf)
+		if !c.check(err == nil, "E_LOG") {
+			return false
 		}
+		d := t - beacon.Time(info, round).Unix()
+		c.check(d >= 0, "E_ANCHOR_TIME")
+		if d > bracket {
+			v.Late++
+			return false
+		}
+		return d >= 0
+	}
+	prevTimely := false
+	if len(R.Proofs) > 0 {
+		prevTimely = timely(R.Proofs[0], pocc.EntryLeaf(agentPub, 0, e0), b.Round)
 	}
 
 	// Delivered.
@@ -134,13 +145,10 @@ func Verify(ctx context.Context, R *pocc.Receipt, env Env) pocc.Verdict {
 		c.check(pocc.Hex(e) == hb.E && pocc.VerifyRaw(b.AgentPubKey, e, hb.Sig), "E_CHAIN")
 		anchored := false
 		if i+1 < len(R.Proofs) {
-			t, err := checkProof(ctx, env, R.Proofs[i+1], pocc.EntryLeaf(agentPub, hb.Seq, e))
-			if c.check(err == nil, "E_LOG") {
-				d := t - beacon.Time(info, hb.Round).Unix()
-				anchored = c.check(d >= 0 && d <= bracket, "E_BRACKET")
-			}
+			anchored = timely(R.Proofs[i+1], pocc.EntryLeaf(agentPub, hb.Seq, e), hb.Round)
 		}
-		if hb.Round == beacon.NextSlot(prevR, slot) && anchored {
+		// Credit needs both ends of the interval anchored in time.
+		if hb.Round == beacon.NextSlot(prevR, slot) && anchored && prevTimely {
 			tEnd := beacon.Time(info, hb.Round)
 			tStart := beacon.Time(info, prevR)
 			if !tStart.Before(start) && !tEnd.After(end) {
@@ -154,7 +162,7 @@ func Verify(ctx context.Context, R *pocc.Receipt, env Env) pocc.Verdict {
 		if hb.Final {
 			finalSeen = true
 		}
-		prevE, prevR = e, hb.Round
+		prevE, prevR, prevTimely = e, hb.Round, anchored
 	}
 	if env.Forks != nil {
 		bad := false
@@ -192,7 +200,7 @@ func Verify(ctx context.Context, R *pocc.Receipt, env Env) pocc.Verdict {
 	switch {
 	case len(c.codes) > 0:
 		v.Status = StatusInvalid
-	case v.Gaps > 0:
+	case v.Gaps > 0 || v.Late > 0:
 		v.Status = StatusValidWithGaps
 	default:
 		v.Status = StatusValid

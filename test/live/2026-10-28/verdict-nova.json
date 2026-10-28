@@ -1,0 +1,21 @@
+{
+  "pocc": "poc-0.2",
+  "verifier_version": "pocc-verify/0.2.0",
+  "receipt_hash": "9c74185f63294f934fcab3d616c9e03b9d8e9994d3e4aba8a64d476fb2955479",
+  "status": "INVALID",
+  "assurance": "L0",
+  "gaps": 1,
+  "late": 6,
+  "credited_s": 2460,
+  "per_hour_s": {
+    "2026-10-28T21:00:00Z": 2460
+  },
+  "max_amount_micros": 2706000,
+  "disclosed": {
+    "48/cpu_ms": 40930,
+    "48/gpu_busy_ms": 0
+  },
+  "codes": [
+    "E_OVERBILL"
+  ]
+}

@@ -1,0 +1,15 @@
+[
+  {
+    "pocc": "poc-0.2",
+    "lease": "ord-live-1",
+    "policy_hash": "43aa8bb993763888eaa58e61c0deadb81961d305ea9e9d3f2a48f6e72a6a1fd7",
+    "window_start": 1793221200,
+    "window_end": 1793224800,
+    "unit": "instance-second",
+    "units": 2460,
+    "assurance": "L0",
+    "uptime_bp": 6833,
+    "receipt_hash": "f599d30b2d14c6fe212267080ea1181b443f28f6ca717b403e059f8dfea478b0",
+    "sig": "u2yEP4L5ySwR9K9ItaVdepSDhMSjM/RTDujrN8H9QsJcg9HUbaks+BhQS7l0XCnzNPtmEQP+1jW0qtgbnJjxDg=="
+  }
+]

@@ -78,15 +78,9 @@ func (h *HTTP) Get(ctx context.Context, round uint64) (Round, error) {
 		return r, nil
 	}
 	h.mu.Unlock()
-	if wait := time.Until(Time(h.Info, round)); wait > 0 {
-		select {
-		case <-time.After(wait):
-		case <-ctx.Done():
-			return Round{}, ctx.Err()
-		}
-	}
+	// Poll instead of waiting on the local clock: a paused VM's clock lags.
 	var lastErr error
-	for attempt := 0; attempt < 5; attempt++ {
+	for attempt := 0; attempt < 20; attempt++ {
 		r, err := h.fetch(ctx, round)
 		if err == nil {
 			h.mu.Lock()
@@ -96,7 +90,7 @@ func (h *HTTP) Get(ctx context.Context, round uint64) (Round, error) {
 		}
 		lastErr = err
 		select {
-		case <-time.After(time.Duration(attempt+1) * 500 * time.Millisecond):
+		case <-time.After(time.Second):
 		case <-ctx.Done():
 			return Round{}, ctx.Err()
 		}
@@ -136,6 +130,28 @@ func (h *HTTP) fetch(ctx context.Context, round uint64) (Round, error) {
 		return Round{}, fmt.Errorf("drand round %d: randomness does not match signature", round)
 	}
 	return Round{Round: round, Randomness: rnd}, nil
+}
+
+// Latest returns drand's latest published round. The agent uses it as its
+// clock, because the VM's own clock can be frozen by the host.
+func (h *HTTP) Latest(ctx context.Context) (uint64, error) {
+	url := fmt.Sprintf("%s/%s/public/latest", h.Info.URL, h.Info.ChainHash)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	resp, err := h.Client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("drand latest: HTTP %d", resp.StatusCode)
+	}
+	var body struct {
+		Round uint64 `json:"round"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return 0, err
+	}
+	return body.Round, nil
 }
 
 // Fake is a deterministic beacon for tests.

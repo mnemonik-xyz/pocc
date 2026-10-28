@@ -1,0 +1,21 @@
+{
+  "pocc": "poc-0.2",
+  "order_id": "ord-live-1",
+  "request_hash": "917addbc8fe735efe61b02bcb2df4a0bad8102624cddbb7a0b39b00cd4f98ccb",
+  "rate_micros_per_s": 1100,
+  "currency": "EUR",
+  "beacon": {
+    "url": "https://api.drand.sh",
+    "chain_hash": "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971",
+    "period_s": 3,
+    "genesis_time": 1692803367
+  },
+  "notary": {
+    "url": "http://85.204.255.130:8080"
+  },
+  "slot_rounds": 20,
+  "bracket_s": 30,
+  "provider_pubkey": "xBmCAR1ZpnP1G6nsD2VkEkA2prmam0BVfQao9e4eRU0=",
+  "provider_seal_key": "oLAbRzT32qLE4XasG86yLo//vNmLZcMDM7wDvvT8cy4=",
+  "sig": "XWEAHvYrZNF200UMIYvllmEVHAUJxaUS/DQr+qNJvp44UY0RCKhQ/Ingshq8cncFRYIRryGAMYjoMWWjCn47Aw=="
+}

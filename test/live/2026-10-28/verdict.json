@@ -1,0 +1,19 @@
+{
+  "pocc": "poc-0.2",
+  "verifier_version": "pocc-verify/0.2.0",
+  "receipt_hash": "f599d30b2d14c6fe212267080ea1181b443f28f6ca717b403e059f8dfea478b0",
+  "status": "VALID_WITH_GAPS",
+  "assurance": "L0",
+  "gaps": 1,
+  "late": 6,
+  "credited_s": 2460,
+  "per_hour_s": {
+    "2026-10-28T21:00:00Z": 2460
+  },
+  "max_amount_micros": 2706000,
+  "disclosed": {
+    "48/cpu_ms": 40930,
+    "48/gpu_busy_ms": 0
+  },
+  "codes": []
+}

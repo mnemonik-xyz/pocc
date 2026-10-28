@@ -188,7 +188,8 @@ length-prefixed (see [deviations](#8-deviations-from-the-spec)).
 | Notary leaf | `H(entry, agent_pk, seq, e)` | `pkg/pocc/chain.go` |
 | Batch tree | RFC 9162 Merkle tree and inclusion proofs | `pkg/pocc/merkle.go` |
 | Seed sealing | X25519 + HKDF-SHA256 + AES-256-GCM, to tenant and provider | `pkg/pocc/seal.go` |
-| Credit | the boot and every heartbeat sit on 60 s slots; each pair of consecutive slots earns 60 s, a gap and the interval across it earn nothing | `pkg/verify/verify.go` |
+| Credit | the boot and every heartbeat sit on 60 s slots; each pair of consecutive slots earns 60 s when both are anchored within 30 s of their round; a gap, a late entry and every interval touching them earn nothing | `pkg/verify/verify.go` |
+| Agent clock | drand's latest round, not the VM clock; a slot reached more than 15 s late is skipped | `pkg/agent/agent.go` |
 
 ## 7. Repository layout and status
 
@@ -213,5 +214,9 @@ length-prefixed (see [deviations](#8-deviations-from-the-spec)).
   itself and compares values; it also checks `randomness = SHA-256(signature)`.
 - **Dev anchor.** Until the chain anchor lands, the notary signs `(root, time)` with an
   anchor key. That is only as honest as the notary and is for development only.
+- **Late anchoring costs credit, not validity.** An entry anchored more than 30 s
+  after its round earns nothing and is counted in the verdict's `late`; an anchor
+  time before its round is fatal (`E_ANCHOR_TIME`). Found in the live test, where a
+  paused VM's frozen clock produced stale heartbeats.
 - **Stage 1 (SEV-SNP) is not implemented.** A request with attestation `sev-snp`
   verifies as `E_SNP_UNSUPPORTED`.

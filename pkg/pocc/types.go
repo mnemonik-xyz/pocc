@@ -209,6 +209,7 @@ type Verdict struct {
 	Status          string            `json:"status"`    // VALID, VALID_WITH_GAPS, INVALID
 	Assurance       string            `json:"assurance"` // L0 (Stage 0) or L1 (Stage 1)
 	Gaps            int               `json:"gaps"`
+	Late            int               `json:"late"` // entries anchored after the bracket: no credit
 	CreditedS       int64             `json:"credited_s"`
 	PerHourS        map[string]int64  `json:"per_hour_s"`
 	MaxAmountMicros int64             `json:"max_amount_micros"`

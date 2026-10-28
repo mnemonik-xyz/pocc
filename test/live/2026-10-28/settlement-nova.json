@@ -1,0 +1,10 @@
+{
+  "pocc": "poc-0.2",
+  "receipt_hash": "9c74185f63294f934fcab3d616c9e03b9d8e9994d3e4aba8a64d476fb2955479",
+  "verdict_hash": "f142184a84936d4343c8812e1555547c0f0b25ca072913806238a4a2fc81c8cc",
+  "decision": "dispute",
+  "codes": [
+    "E_OVERBILL"
+  ],
+  "sig": "Kns+0xi1A+E3C0N+d6nSYvk2q07349eEL5sLfLnISPI3gomUCXPFc/6as/8x73HaArRFsr9zZTX1ZToMPIn1Bg=="
+}

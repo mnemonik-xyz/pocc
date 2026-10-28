@@ -1,0 +1,61 @@
+{
+  "pocc": "poc-0.2",
+  "request_id": "req-live-1",
+  "resource": {
+    "flavor": "d2.cpu1ram1",
+    "vcpus": 1,
+    "ram_mb": 1024,
+    "gpu_count": 0
+  },
+  "period": {
+    "start": "2026-10-28T21:00:00Z",
+    "end": "2026-10-28T22:00:00Z"
+  },
+  "max_rate_micros_per_s": 1100,
+  "currency": "EUR",
+  "attestation": "none",
+  "allowed_image": "2d8c6a76-dc42-41f9-82ad-1a9dc278de8e",
+  "tenant_pubkey": "8ukbNAshPE3ZqPvC0zr/4qgWsevePR+vvk6OD+F5xoE=",
+  "tenant_seal_key": "58Oe9sQuITdFWfAio1RPjQdNZgb2qrYdhYNknlf0r3E=",
+  "policy": {
+    "case": "rent",
+    "version": 1,
+    "scope": {
+      "chain_id": "amnezia-live-dev",
+      "vault": "none",
+      "token": "none"
+    },
+    "validity": {
+      "after": 1793221200,
+      "until": 1793829600
+    },
+    "delivery": {
+      "kind": "signed_usage",
+      "meter_key": "nPYuPiref5GBa/sb8/kY6vmK2uwvjq38OvahIXZMBr8=",
+      "unit": "instance-second",
+      "price_per_unit": 1100,
+      "tolerance": 0,
+      "pocc": {
+        "format": "poc-0.2",
+        "attestation": "none",
+        "allowed_image": "2d8c6a76-dc42-41f9-82ad-1a9dc278de8e",
+        "flavor": "d2.cpu1ram1",
+        "beacon_chain_hash": "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971",
+        "slot_rounds": 20,
+        "bracket_s": 30,
+        "anchor": "dev-file"
+      }
+    },
+    "rule": {
+      "all": [
+        {
+          "assurance_at_least": "L0"
+        },
+        {
+          "uptime_at_least_bp": 9500
+        }
+      ]
+    }
+  },
+  "sig": "9xfTbZ9zswL0ImIWHBPHNoMN3H6pRrJ0gULT/ZDQ0VYeU2d2eEgmi9VXK3uI+BO51FZwTCSV3CVjJ1LqM0mACA=="
+}

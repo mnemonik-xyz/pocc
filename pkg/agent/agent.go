@@ -180,6 +180,20 @@ func (a *Agent) confirm(e pocc.Entry) {
 	a.pending = nil
 }
 
+// latestRound is the agent's clock: drand's latest round when the beacon can
+// report it, otherwise the local clock. A host can freeze the VM's clock (for
+// example by pausing it); the beacon keeps real time.
+func (a *Agent) latestRound(ctx context.Context, info pocc.BeaconInfo) uint64 {
+	if l, ok := a.Beacon.(interface {
+		Latest(context.Context) (uint64, error)
+	}); ok {
+		if r, err := l.Latest(ctx); err == nil {
+			return r
+		}
+	}
+	return beacon.RoundAt(info, time.Now())
+}
+
 // Run boots and then beats on every slot until the period ends or stop closes.
 // After stop closes, the agent sends a final heartbeat at the next slot.
 func (a *Agent) Run(ctx context.Context, info pocc.BeaconInfo, stop <-chan struct{}) error {
@@ -187,24 +201,39 @@ func (a *Agent) Run(ctx context.Context, info pocc.BeaconInfo, stop <-chan struc
 	if err != nil {
 		return fmt.Errorf("period end: %w", err)
 	}
-	r0 := beacon.NextSlot(beacon.RoundAt(info, time.Now()), uint64(a.Order.SlotRounds))
+	slotRounds := uint64(a.Order.SlotRounds)
+	period := time.Duration(info.PeriodS) * time.Second
+	// A slot reached more than this late is skipped: its heartbeat could not be
+	// anchored within the bracket anyway.
+	lateRounds := uint64(a.Order.BracketS/info.PeriodS) / 2
+	now := a.latestRound(ctx, info)
+	r0 := beacon.NextSlot(now, slotRounds)
 	a.Logf("waiting for slot %d to boot", r0)
+	select {
+	case <-time.After(time.Duration(r0-now) * period):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	if _, err := a.Boot(ctx, r0); err != nil {
 		return err
 	}
 	a.Logf("booted: agent %s, round %d", a.pub, r0)
 	stopping := false
-	slotRounds := uint64(a.Order.SlotRounds)
 	for !a.done {
+		now := a.latestRound(ctx, info)
 		slot := beacon.NextSlot(a.prevRound, slotRounds)
-		// Skip slots already in the past (for example after a long notary outage).
-		if now := beacon.RoundAt(info, time.Now()); now > slot {
-			slot = beacon.NextSlot(now-1, slotRounds) // first slot at or after now
+		if now > slot+lateRounds {
+			a.Logf("beacon is at round %d, past slot %d: skipping to the next slot", now, slot)
+			slot = beacon.NextSlot(now, slotRounds)
+		}
+		var wait time.Duration
+		if slot > now {
+			wait = time.Duration(slot-now) * period
 		}
 		at := beacon.Time(info, slot)
 		final := stopping || !at.Before(end) || !beacon.Time(info, slot+slotRounds).Before(end.Add(time.Second))
 		select {
-		case <-time.After(time.Until(at)):
+		case <-time.After(wait):
 		case <-stop:
 			if !stopping {
 				stopping = true
@@ -213,6 +242,11 @@ func (a *Agent) Run(ctx context.Context, info pocc.BeaconInfo, stop <-chan struc
 			continue
 		case <-ctx.Done():
 			return ctx.Err()
+		}
+		// Re-check after sleeping: the process or the VM may have been frozen.
+		if now := a.latestRound(ctx, info); now > slot+lateRounds {
+			a.Logf("woke at round %d, past slot %d: skipping it", now, slot)
+			continue
 		}
 		hb, err := a.Beat(ctx, slot, final)
 		if err != nil {
