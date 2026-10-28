@@ -8,18 +8,24 @@
 //	fip        provider: attach a floating IP to a server
 //	receipt    provider: assemble and sign the receipt from the notary's log
 //	settle     tenant: sign accept or dispute for a verdict
+//	image      print a Glance image ID by name
+//	pause      pause or unpause a server (test: the provider stops delivery)
+//	down       delete everything netsetup and provision created
 //
 // OpenStack credentials come from the standard OS_* environment variables.
 package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -41,6 +47,7 @@ func main() {
 	cmds := map[string]func([]string){
 		"keygen": keygen, "request": request, "order": order, "netsetup": netsetup,
 		"provision": provision, "fip": fip, "receipt": mkReceipt, "settle": settle,
+		"image": image, "pause": pause, "down": down, "ip": ip,
 	}
 	f, ok := cmds[os.Args[1]]
 	if !ok {
@@ -50,7 +57,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: pocc-broker keygen|request|order|netsetup|provision|fip|receipt|settle [flags]")
+	fmt.Fprintln(os.Stderr, "usage: pocc-broker keygen|request|order|netsetup|provision|fip|receipt|settle|image|pause|down [flags]")
 	os.Exit(2)
 }
 
@@ -220,6 +227,8 @@ Wants=network-online.target
 
 [Service]
 ExecStart=/usr/local/bin/pocc-agent -config /etc/pocc/agent.json
+StandardOutput=journal+console
+StandardError=journal+console
 Restart=no
 KillSignal=SIGTERM
 TimeoutStopSec=90
@@ -235,6 +244,8 @@ Wants=network-online.target
 
 [Service]
 ExecStart=/usr/local/bin/pocc-notary -listen :8080 -data /var/lib/pocc-notary
+StandardOutput=journal+console
+StandardError=journal+console
 Restart=always
 
 [Install]
@@ -264,6 +275,24 @@ func cloudInit(role, ref, goVersion string, files map[string]string) string {
 	return b.String()
 }
 
+// gatewayInit runs Caddy as an HTTPS front for the notary, for operators
+// whose own network allows only HTTPS to named hosts. tls internal uses
+// Caddy's local CA; clients that cannot trust it need their own route.
+func gatewayInit(host, backend string) string {
+	return fmt.Sprintf(`#cloud-config
+write_files:
+  - path: /etc/caddy/Caddyfile
+    content: |
+      https://%s {
+        tls internal
+        reverse_proxy %s
+      }
+runcmd:
+  - [sh, -c, "curl -fsSL https://github.com/caddyserver/caddy/releases/download/v2.8.4/caddy_2.8.4_linux_amd64.tar.gz | tar -C /usr/local/bin -xz caddy"]
+  - [sh, -c, "nohup /usr/local/bin/caddy run --config /etc/caddy/Caddyfile --adapter caddyfile > /var/log/caddy.log 2>&1 &"]
+`, host, backend)
+}
+
 func provision(args []string) {
 	fs := flag.NewFlagSet("provision", flag.ExitOnError)
 	role := fs.String("role", "agent", "agent or notary")
@@ -275,6 +304,8 @@ func provision(args []string) {
 	volGB := fs.Int("volume-gb", 5, "boot volume size")
 	ref := fs.String("ref", "main", "pocc git commit or branch to build on the VM")
 	goVersion := fs.String("go", "1.24.7", "Go version to build with on the VM")
+	backend := fs.String("backend", "", "gateway: notary private address, e.g. 10.42.0.190:8080")
+	host := fs.String("host", "", "gateway: public hostname, e.g. 85-204-255-147.sslip.io")
 	reqPath := fs.String("request", "request.json", "agent: signed request")
 	ordPath := fs.String("order", "order.json", "agent: signed order")
 	userDataOut := fs.String("user-data-out", "", "also write the user data to this file")
@@ -297,10 +328,17 @@ func provision(args []string) {
 		files["/etc/systemd/system/pocc-agent.service"] = agentUnit
 	case "notary":
 		files["/etc/systemd/system/pocc-notary.service"] = notaryUnit
+	case "gateway":
+		if *backend == "" || *host == "" {
+			log.Fatal("gateway needs -backend and -host")
+		}
 	default:
-		log.Fatal("-role must be agent or notary")
+		log.Fatal("-role must be agent, notary or gateway")
 	}
 	ud := cloudInit(*role, *ref, *goVersion, files)
+	if *role == "gateway" {
+		ud = gatewayInit(*host, *backend)
+	}
 	if *userDataOut != "" {
 		must(os.WriteFile(*userDataOut, []byte(ud), 0o644))
 	}
@@ -316,7 +354,7 @@ func provision(args []string) {
 		"user_data": base64.StdEncoding.EncodeToString([]byte(ud)), "config_drive": true,
 		"block_device_mapping_v2": []map[string]any{{"boot_index": 0, "uuid": *image, "source_type": "image",
 			"destination_type": "volume", "volume_size": *volGB, "delete_on_termination": true}}}
-	if *role == "notary" {
+	if *role == "notary" || *role == "gateway" {
 		srv["security_groups"] = []map[string]string{{"name": "default"}, {"name": *secgroup}}
 	}
 	var r struct{ Server struct{ ID string } }
@@ -327,14 +365,41 @@ func provision(args []string) {
 func fip(args []string) {
 	fs := flag.NewFlagSet("fip", flag.ExitOnError)
 	server := fs.String("server", "", "server ID")
+	allocate := fs.Bool("allocate-only", false, "allocate a floating IP without a port; prints \"ip id\"")
+	existing := fs.String("id", "", "associate this existing floating IP ID instead of allocating")
 	_ = fs.Parse(args)
 	ctx := context.Background()
 	c, err := openstack.FromEnv(ctx)
 	must(err)
+	if *allocate {
+		var nets struct {
+			Networks []struct{ ID string } `json:"networks"`
+		}
+		must(c.Do(ctx, "network", http.MethodGet, "/v2.0/networks?router:external=true", nil, &nets))
+		if len(nets.Networks) == 0 {
+			log.Fatal("no external network")
+		}
+		var f struct {
+			FloatingIP struct {
+				ID      string `json:"id"`
+				Address string `json:"floating_ip_address"`
+			} `json:"floatingip"`
+		}
+		must(c.Do(ctx, "network", http.MethodPost, "/v2.0/floatingips", map[string]any{"floatingip": map[string]any{
+			"floating_network_id": nets.Networks[0].ID}}, &f))
+		fmt.Println(f.FloatingIP.Address, f.FloatingIP.ID)
+		return
+	}
 	var ports struct{ Ports []struct{ ID string } }
 	must(c.Do(ctx, "network", http.MethodGet, "/v2.0/ports?device_id="+*server, nil, &ports))
 	if len(ports.Ports) == 0 {
 		log.Fatal("server has no port yet")
+	}
+	if *existing != "" {
+		must(c.Do(ctx, "network", http.MethodPut, "/v2.0/floatingips/"+*existing,
+			map[string]any{"floatingip": map[string]any{"port_id": ports.Ports[0].ID}}, nil))
+		fmt.Println("associated", *existing)
+		return
 	}
 	var nets struct {
 		Networks []struct {
@@ -365,6 +430,8 @@ func mkReceipt(args []string) {
 	serverID := fs.String("server", "", "Nova server ID")
 	billed := fs.Int64("billed-seconds", -1, "seconds to bill (default: Nova's own usage meter)")
 	novaJSON := fs.String("nova-json", "", "offline: read the Nova server record from this file instead of OpenStack")
+	notaryURL := fs.String("notary-url", "", "read the notary here instead of the order's URL (e.g. an HTTPS gateway)")
+	insecure := fs.Bool("notary-insecure-tls", false, "accept a self-signed gateway certificate; notary data is verified by signature anyway")
 	out := fs.String("out", "receipt.json", "output")
 	_ = fs.Parse(args)
 	var q pocc.Request
@@ -374,7 +441,10 @@ func mkReceipt(args []string) {
 	p, err := keys.Load(*k)
 	must(err)
 	ctx := context.Background()
-	src := receipt.NotaryClient{URL: o.Notary.URL}
+	src := receipt.NotaryClient{URL: o.Notary.URL, Client: notaryHTTP(*insecure)}
+	if *notaryURL != "" {
+		src.URL = *notaryURL
+	}
 	entries := src.Entries(*agentPub)
 	if len(entries) == 0 {
 		log.Fatal("notary has no entries for this agent")
@@ -438,4 +508,144 @@ func settle(args []string) {
 	must(err)
 	must(jsonfile.Write(*out, s))
 	fmt.Fprintf(os.Stderr, "%s written to %s\n", s.Decision, *out)
+}
+
+func image(args []string) {
+	fs := flag.NewFlagSet("image", flag.ExitOnError)
+	name := fs.String("name", "debian-13-genericcloud-amd64-20260723", "image name")
+	_ = fs.Parse(args)
+	ctx := context.Background()
+	c, err := openstack.FromEnv(ctx)
+	must(err)
+	var r struct{ Images []struct{ ID string } }
+	must(c.Do(ctx, "image", http.MethodGet, "/v2/images?name="+url.QueryEscape(*name), nil, &r))
+	if len(r.Images) == 0 {
+		log.Fatalf("image %q not found", *name)
+	}
+	fmt.Println(r.Images[0].ID)
+}
+
+func pause(args []string) {
+	fs := flag.NewFlagSet("pause", flag.ExitOnError)
+	server := fs.String("server", "", "server ID")
+	resume := fs.Bool("resume", false, "unpause instead")
+	_ = fs.Parse(args)
+	ctx := context.Background()
+	c, err := openstack.FromEnv(ctx)
+	must(err)
+	action := map[string]any{"pause": nil}
+	if *resume {
+		action = map[string]any{"unpause": nil}
+	}
+	must(c.Do(ctx, "compute", http.MethodPost, "/servers/"+*server+"/action", action, nil))
+}
+
+// down deletes the servers named <name>-*, their floating IPs, and the router,
+// subnet, network and security group that netsetup created.
+func down(args []string) {
+	fs := flag.NewFlagSet("down", flag.ExitOnError)
+	name := fs.String("name", "pocc", "name prefix used by netsetup and provision")
+	_ = fs.Parse(args)
+	ctx := context.Background()
+	c, err := openstack.FromEnv(ctx)
+	must(err)
+	warn := func(err error) {
+		if err != nil {
+			log.Print(err)
+		}
+	}
+	var srv struct{ Servers []struct{ ID, Name string } }
+	must(c.Do(ctx, "compute", http.MethodGet, "/servers", nil, &srv))
+	var ids []string
+	for _, s := range srv.Servers {
+		if strings.HasPrefix(s.Name, *name+"-") {
+			ids = append(ids, s.ID)
+			var fips struct {
+				FloatingIPs []struct {
+					ID string `json:"id"`
+				} `json:"floatingips"`
+			}
+			var ports struct{ Ports []struct{ ID string } }
+			warn(c.Do(ctx, "network", http.MethodGet, "/v2.0/ports?device_id="+s.ID, nil, &ports))
+			for _, p := range ports.Ports {
+				warn(c.Do(ctx, "network", http.MethodGet, "/v2.0/floatingips?port_id="+p.ID, nil, &fips))
+				for _, f := range fips.FloatingIPs {
+					warn(c.Do(ctx, "network", http.MethodDelete, "/v2.0/floatingips/"+f.ID, nil, nil))
+					fmt.Println("deleted floating IP", f.ID)
+				}
+			}
+			warn(c.Do(ctx, "compute", http.MethodDelete, "/servers/"+s.ID, nil, nil))
+			fmt.Println("deleting server", s.Name, s.ID)
+		}
+	}
+	for _, id := range ids {
+		for i := 0; i < 60; i++ {
+			if _, err := c.GetServer(ctx, id); errors.Is(err, openstack.ErrNotFound) {
+				break
+			}
+			time.Sleep(5 * time.Second)
+		}
+	}
+	type named struct{ ID, Name string }
+	var routers struct{ Routers []named }
+	var subnets struct{ Subnets []named }
+	var nets struct{ Networks []named }
+	var sgs struct {
+		SGs []named `json:"security_groups"`
+	}
+	warn(c.Do(ctx, "network", http.MethodGet, "/v2.0/subnets", nil, &subnets))
+	warn(c.Do(ctx, "network", http.MethodGet, "/v2.0/routers", nil, &routers))
+	for _, r := range routers.Routers {
+		if r.Name != *name+"-router" {
+			continue
+		}
+		for _, sn := range subnets.Subnets {
+			if sn.Name == *name+"-subnet" {
+				warn(c.Do(ctx, "network", http.MethodPut, "/v2.0/routers/"+r.ID+"/remove_router_interface",
+					map[string]any{"subnet_id": sn.ID}, nil))
+			}
+		}
+		warn(c.Do(ctx, "network", http.MethodDelete, "/v2.0/routers/"+r.ID, nil, nil))
+		fmt.Println("deleted router", r.ID)
+	}
+	warn(c.Do(ctx, "network", http.MethodGet, "/v2.0/networks", nil, &nets))
+	for _, n := range nets.Networks {
+		if n.Name == *name+"-net" {
+			warn(c.Do(ctx, "network", http.MethodDelete, "/v2.0/networks/"+n.ID, nil, nil))
+			fmt.Println("deleted network", n.ID)
+		}
+	}
+	warn(c.Do(ctx, "network", http.MethodGet, "/v2.0/security-groups", nil, &sgs))
+	for _, g := range sgs.SGs {
+		if g.Name == *name+"-notary" {
+			warn(c.Do(ctx, "network", http.MethodDelete, "/v2.0/security-groups/"+g.ID, nil, nil))
+			fmt.Println("deleted security group", g.ID)
+		}
+	}
+}
+
+func notaryHTTP(insecure bool) *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	if insecure {
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // transport only; content is signed
+	}
+	return &http.Client{Timeout: 20 * time.Second, Transport: tr}
+}
+
+func ip(args []string) {
+	fs := flag.NewFlagSet("ip", flag.ExitOnError)
+	server := fs.String("server", "", "server ID")
+	_ = fs.Parse(args)
+	ctx := context.Background()
+	c, err := openstack.FromEnv(ctx)
+	must(err)
+	s, err := c.GetServer(ctx, *server)
+	must(err)
+	for _, addrs := range s.Addresses {
+		for _, a := range addrs {
+			fmt.Println(a.Addr)
+			return
+		}
+	}
+	log.Fatal("server has no address yet")
 }

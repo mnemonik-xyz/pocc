@@ -4,10 +4,13 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"time"
 
 	"github.com/mnemonik-xyz/pocc/internal/jsonfile"
 	"github.com/mnemonik-xyz/pocc/internal/keys"
@@ -24,6 +27,7 @@ func main() {
 	anchorKey := flag.String("anchor-key", "", "trusted dev anchor key (default: the order's, with a warning)")
 	providerKey := flag.String("provider-key", "", "pin the provider's public key")
 	notaryURL := flag.String("notary", "", "optional notary URL for fork checks")
+	insecure := flag.Bool("notary-insecure-tls", false, "accept a self-signed gateway certificate for the fork check")
 	meterKeys := flag.String("meter-keys", "", "key file of the policy's meter key; signs usage records")
 	recordsOut := flag.String("records", "usage-records.json", "where to write usage records")
 	flag.Parse()
@@ -44,7 +48,11 @@ func main() {
 	env := verify.Env{Beacon: beacon.NewHTTP(beacon.Quicknet), Anchors: anchor.DevChecker{PubKey: ak},
 		ProviderKey: *providerKey}
 	if *notaryURL != "" {
-		env.Forks = receipt.NotaryClient{URL: *notaryURL}
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		if *insecure {
+			tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // transport only
+		}
+		env.Forks = receipt.NotaryClient{URL: *notaryURL, Client: &http.Client{Timeout: 20 * time.Second, Transport: tr}}
 	}
 	v := verify.Verify(context.Background(), &R, env)
 	if err := jsonfile.Write(*out, v); err != nil {
@@ -71,6 +79,18 @@ func main() {
 			log.Fatal(err)
 		}
 		fmt.Fprintf(os.Stderr, "%d usage record(s) written to %s\n", len(recs), *recordsOut)
+		pol := R.Request.Policy
+		for _, rec := range recs {
+			ok, err := verify.DryRunRule(pol.Rule, rec, pol.Delivery.PricePerUnit)
+			decision := "Deny"
+			if err != nil {
+				decision = "Error: " + err.Error()
+			} else if ok {
+				decision = "Allow"
+			}
+			fmt.Fprintf(os.Stderr, "  window %s: %d s, uptime %d bp, assurance %s -> rule dry run: %s\n",
+				time.Unix(rec.WindowStart, 0).UTC().Format("2006-01-02 15:04"), rec.Units, rec.UptimeBP, rec.Assurance, decision)
+		}
 	}
 	if v.Status == verify.StatusInvalid {
 		os.Exit(2)

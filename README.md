@@ -9,7 +9,9 @@ for proven hours through [Warrant](https://github.com/mnemonik-xyz/warrant).
 - **Stage 1** adds an AMD SEV-SNP boot report when such hosts are available.
 
 Read [docs/architecture.md](docs/architecture.md) for roles, diagrams and the
-proving cycle, and [docs/run-stage0.md](docs/run-stage0.md) to run a cycle on OpenStack.
+proving cycle, [docs/run-stage0.md](docs/run-stage0.md) to run a cycle on OpenStack, and
+[docs/live-test-plan.md](docs/live-test-plan.md) for the live test on amnezia.cloud
+(reproducible with `scripts/live-test.sh`).
 
 ## How it works, in one paragraph
 
