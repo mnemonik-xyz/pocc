@@ -29,16 +29,16 @@ type Period struct {
 
 // Request is step 1: what the tenant wants, signed by the tenant.
 type Request struct {
-	Version            string   `json:"pocc"`
-	RequestID          string   `json:"request_id"`
-	Resource           Resource `json:"resource"`
-	Period             Period   `json:"period"`
-	MaxRateMicros      int64    `json:"max_rate_micros_per_s"` // currency micro-units per second
-	Currency           string   `json:"currency"`
-	Attestation        string   `json:"attestation"`
-	AllowedImage       string   `json:"allowed_image,omitempty"`       // Stage 0: Glance image ID
-	AllowedMeasurement string   `json:"allowed_measurement,omitempty"` // Stage 1: SNP launch measurement
-	TenantPubKey       string   `json:"tenant_pubkey"`                 // base64 Ed25519
+	Version            string      `json:"pocc"`
+	RequestID          string      `json:"request_id"`
+	Resource           Resource    `json:"resource"`
+	Period             Period      `json:"period"`
+	MaxRateMicros      int64       `json:"max_rate_micros_per_s"` // currency micro-units per second
+	Currency           string      `json:"currency"`
+	Attestation        string      `json:"attestation"`
+	AllowedImage       string      `json:"allowed_image,omitempty"`       // Stage 0: Glance image ID
+	AllowedMeasurement string      `json:"allowed_measurement,omitempty"` // Stage 1: SNP launch measurement
+	TenantPubKey       string      `json:"tenant_pubkey"`                 // base64 Ed25519
 	TenantSealKey      string      `json:"tenant_seal_key"`               // base64 X25519
 	Policy             *RentPolicy `json:"policy,omitempty"`              // Warrant rent policy (spec 10)
 	Sig                string      `json:"sig,omitempty"`

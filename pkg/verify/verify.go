@@ -185,6 +185,9 @@ func Verify(ctx context.Context, R *pocc.Receipt, env Env) pocc.Verdict {
 
 	v.MaxAmountMicros = o.RateMicros * credited
 	v.Codes = c.codes
+	if v.Codes == nil {
+		v.Codes = []string{}
+	}
 	switch {
 	case len(c.codes) > 0:
 		v.Status = StatusInvalid
