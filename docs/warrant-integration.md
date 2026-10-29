@@ -544,5 +544,4 @@ cost, are in `docs/decisions.md` (entries 15–25).
 - [x] PoCC core stays consumer-agnostic; Warrant code in `pkg/adapter/warrant` (24).
 - [x] One guardrail key for the registry, acceptance and meter roles in v1 (25).
 
-Phase A now produces the two spec pull requests (PE-1 in policy-execution, W-1 in
-warrant), each written in Simplified Technical English as those repositories require.
+Phase A is open for review: PE-1 is policy-execution [#76](https://github.com/mnemonik-xyz/policy-execution/pull/76), W-1 is warrant [#16](https://github.com/mnemonik-xyz/warrant/pull/16). Both are drafts; the owner merges.

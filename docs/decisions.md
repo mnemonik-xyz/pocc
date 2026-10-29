@@ -49,6 +49,7 @@ handoff (`docs/handoff/`).
 | 23 | 2026-10-29 | One order: the escrow order replaces the PoCC Order; `h0` derived from `policy_hash`, `lease_id`, chain, escrow, `orderId` | Taken | Integration §5, PC-1 | Reinstate the provider-signed PoCC Order; `h0` formula changes |
 | 24 | 2026-10-29 | PoCC core stays consumer-agnostic (Ed25519, JCS); Warrant code isolated in `pkg/adapter/warrant` | Taken | pocc | None: an adapter can always be added |
 | 25 | 2026-10-29 | One buyer guardrail key fills registry, acceptance and meter roles in v1; policy fields stay separate | Taken | Integration §3, template | Issue separate keys; no format change |
+| 26 | 2026-10-29 | Phase A opened as draft PRs: policy-execution #76 (PE-1) and warrant #16 (W-1); the owner merges | Taken | Both repos | Close the PRs |
 
 ## Decisions in full
 
