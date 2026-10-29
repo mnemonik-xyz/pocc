@@ -26,6 +26,9 @@ var Quicknet = pocc.BeaconInfo{
 	GenesisTime: 1692803367,
 }
 
+// Known maps a beacon chain hash to its info, for escrow-mode bindings.
+var Known = map[string]pocc.BeaconInfo{Quicknet.ChainHash: Quicknet}
+
 // Round is one beacon output.
 type Round struct {
 	Round      uint64

@@ -50,6 +50,9 @@ handoff (`docs/handoff/`).
 | 24 | 2026-10-29 | PoCC core stays consumer-agnostic (Ed25519, JCS); Warrant code isolated in `pkg/adapter/warrant` | Taken | pocc | None: an adapter can always be added |
 | 25 | 2026-10-29 | One buyer guardrail key fills registry, acceptance and meter roles in v1; policy fields stay separate | Taken | Integration §3, template | Issue separate keys; no format change |
 | 26 | 2026-10-29 | Phase A opened as draft PRs: policy-execution #76 (PE-1) and warrant #16 (W-1); the owner merges | Taken | Both repos | Close the PRs |
+| 27 | 2026-10-29 | `lease_id = H(lease, tenant_pubkey, request_id, period)`; not `H(lease, request_hash)` | Taken | Integration §5, `pkg/pocc` | Formula change; leases of existing requests change |
+| 28 | 2026-10-29 | A credited interval belongs to the hour it ends in; one ending exactly on the hour belongs to the hour before | Taken | Verifier | Changes which hour edge intervals credit, not the total |
+| 29 | 2026-10-29 | In escrow mode the receipt's billed fields and signature are optional; billing is through the consumer's notes | Taken | Verifier | Make them mandatory again |
 
 ## Decisions in full
 
@@ -175,6 +178,12 @@ offline mode. *Reversal:* reinstate the Order type as the source of `h0`.
 policy-execution or stay universal. *Outcome:* both: the core stays universal, the
 usage record is the single interception point, and Warrant code lives in
 `pkg/adapter/warrant`. *Reversal:* none needed.
+
+**27 Lease id from request fields.** *Found by:* implementing PC-1: `lease_id = H(request_hash)` is circular, because the Warrant policy inside the request carries `lease_id`. *Outcome:* derive it from the tenant key, the request id and the period, which the policy does not contain. *Reversal:* formula change only.
+
+**28 Hour attribution.** *Found by:* the escrow-mode simulation: drand slots fall at :24 past the minute, so intervals straddle hour edges. *Outcome:* an interval belongs to the hour it ends in; one ending exactly on the hour belongs to the hour before. The first hour of a period credits at most 3,540 s. *Reversal:* a verifier change; totals do not move.
+
+**29 Optional billing fields in escrow mode.** *Reason:* with one order (decision 23) the provider bills through Warrant notes, not through the receipt. The receipt is evidence that anyone can assemble; when billed fields or a signature are present they are still checked. *Reversal:* make them mandatory.
 
 **25 One guardrail key for three roles.** *Owner's ask:* fewer entities and keys.
 *Outcome:* registry, acceptance and meter roles share one secp256k1 key in v1

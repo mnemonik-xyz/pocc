@@ -2,10 +2,14 @@ package sim
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/mnemonik-xyz/pocc/pkg/adapter/warrant"
 	"github.com/mnemonik-xyz/pocc/pkg/pocc"
 	"github.com/mnemonik-xyz/pocc/pkg/verify"
 )
@@ -57,19 +61,97 @@ func TestT1HappyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	var sum int64
+	meterKey := pocc.B64.EncodeToString(w.MeterPriv.Public().(ed25519.PublicKey))
 	for _, r := range recs {
 		sum += r.Units
-		meterKey := R.Request.Policy.Delivery.MeterKey
 		if err := pocc.VerifyDoc(meterKey, pocc.TagUsageRecord, r, r.Sig); err != nil {
 			t.Fatalf("usage record signature: %v", err)
 		}
-		if r.Lease != R.Order.OrderID || r.UptimeBP > 10000 {
+		if r.Lease != pocc.Hex(pocc.LeaseID(R.Request)) || r.UptimeBP > 10000 || r.Hour < 0 || r.Hour > 8 {
 			t.Fatalf("bad record %+v", r)
 		}
 	}
 	if sum != v.CreditedS {
 		t.Fatalf("usage records sum to %d, verdict credited %d", sum, v.CreditedS)
 	}
+	// drand slots fall at :24 past each minute, so an hour-aligned 8 h period
+	// yields nine records: 3,540 s in the first hour and 60 s in the ninth.
+	if len(recs) != 9 || recs[0].Units != 3540 || recs[8].Units != 60 {
+		t.Fatalf("hourly records: %+v", recs)
+	}
+}
+
+// Escrow mode: the Warrant policy in the request, h0 from the escrow order,
+// and Warrant-shaped records from the adapter.
+func TestEscrowModeHappyPath(t *testing.T) {
+	w := NewEscrowWorld(slots, RateMicros)
+	R := run(t, w, nil, 0)
+	if R.EscrowOrder == nil || R.Order.OrderID != "" {
+		t.Fatal("receipt is not in escrow mode")
+	}
+	v := w.Verify(R)
+	expect(t, v, verify.StatusValid)
+	if v.CreditedS != fullCredit || v.MaxAmountMicros != fullCredit*RateMicros {
+		t.Fatalf("credited %d max %d", v.CreditedS, v.MaxAmountMicros)
+	}
+	recs, err := verify.UsageRecords(R, v, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wr, err := warrant.Records(R.Request, recs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wr) != 9 || wr[0].FirstIndex != 0 || wr[8].LastIndex != 8 || wr[0].Units != 3540 || wr[1].Units != 3600 || wr[0].Scope.ChainID != EscrowChainID {
+		t.Fatalf("warrant records: %d records, first %+v", len(wr), wr[0])
+	}
+	b, _ := json.Marshal(wr[0])
+	if !strings.Contains(string(b), `"lease_id":[`) || !strings.Contains(string(b), `"vault":[`) {
+		t.Fatalf("records must serialize hashes and addresses as byte arrays: %s", b)
+	}
+	ms, _ := pocc.MeterSpecHash(w.MeterSpec)
+	if wr[0].MeterSpec != warrant.Bytes32(ms) {
+		t.Fatal("meter_spec in the record differs from the request's")
+	}
+}
+
+// Escrow mode: a policy pinning another meter spec is refused, and so is a
+// receipt bound to another escrow order.
+func TestEscrowModePolicyAndBinding(t *testing.T) {
+	w := NewEscrowWorld(slots, RateMicros)
+	R := run(t, w, nil, 0)
+	other := w.Request
+	other.Policy = WarrantPolicy(w.Request, "k", RateMicros, strings.Repeat("ab", 32))
+	other.Sig, _ = pocc.SignDoc(w.TenantPriv, pocc.TagRequest, other)
+	R2 := *R
+	R2.Request = other
+	expect(t, w.Verify(&R2), verify.StatusInvalid, "E_POLICY")
+
+	R3 := *R
+	R3.EscrowOrder = &pocc.EscrowOrder{ChainID: EscrowChainID, Escrow: EscrowAddr,
+		OrderID: "0x4444444444444444444444444444444444444444444444444444444444444444"}
+	expect(t, w.Verify(&R3), verify.StatusInvalid, "E_BIND")
+
+	// A policy whose price exceeds the request's maximum rate.
+	pricey := w.Request
+	ms, _ := pocc.MeterSpecHash(w.MeterSpec)
+	pricey.Policy = WarrantPolicy(w.Request, "k", 5000, pocc.Hex(ms))
+	pricey.Sig, _ = pocc.SignDoc(w.TenantPriv, pocc.TagRequest, pricey)
+	R4 := *R
+	R4.Request = pricey
+	expect(t, w.Verify(&R4), verify.StatusInvalid, "E_POLICY")
+}
+
+// Escrow mode: the period must start on a clock hour.
+func TestEscrowModePeriodAlignment(t *testing.T) {
+	w := NewEscrowWorld(slots, RateMicros)
+	ps, _ := time.Parse(time.RFC3339, w.Request.Period.Start)
+	w.Request.Period.Start = ps.Add(30 * time.Second).Format(time.RFC3339)
+	ms, _ := pocc.MeterSpecHash(w.MeterSpec)
+	w.Request.Policy = WarrantPolicy(w.Request, "k", RateMicros, pocc.Hex(ms))
+	w.Request.Sig, _ = pocc.SignDoc(w.TenantPriv, pocc.TagRequest, w.Request)
+	R := run(t, w, nil, 0)
+	expect(t, w.Verify(R), verify.StatusInvalid, "E_PERIOD")
 }
 
 // Integrity check that also holds in Stage 0: a key generated outside the VM.
@@ -165,11 +247,15 @@ func TestNovaMismatch(t *testing.T) {
 	expect(t, w.Verify(R), verify.StatusInvalid, "E_NOVA")
 }
 
-// The tenant's policy fixes the price; an order at another price is rejected.
-func TestPolicyMismatch(t *testing.T) {
-	w := NewWorld(slots, 1000) // policy price differs from the order rate
-	R := run(t, w, nil, fullCredit)
-	expect(t, w.Verify(R), verify.StatusInvalid, "E_POLICY")
+// In escrow mode the policy's price, not the request's maximum, prices the hours.
+func TestEscrowModePolicyPrice(t *testing.T) {
+	w := NewEscrowWorld(slots, 1000)
+	R := run(t, w, nil, 0)
+	v := w.Verify(R)
+	expect(t, v, verify.StatusValid)
+	if v.MaxAmountMicros != v.CreditedS*1000 {
+		t.Fatalf("max amount %d, want credited %d x 1000", v.MaxAmountMicros, v.CreditedS)
+	}
 }
 
 // The notary refuses a second history for the same agent and seq.

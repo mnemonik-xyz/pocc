@@ -29,19 +29,22 @@ type Period struct {
 
 // Request is step 1: what the tenant wants, signed by the tenant.
 type Request struct {
-	Version            string      `json:"pocc"`
-	RequestID          string      `json:"request_id"`
-	Resource           Resource    `json:"resource"`
-	Period             Period      `json:"period"`
-	MaxRateMicros      int64       `json:"max_rate_micros_per_s"` // currency micro-units per second
-	Currency           string      `json:"currency"`
-	Attestation        string      `json:"attestation"`
-	AllowedImage       string      `json:"allowed_image,omitempty"`       // Stage 0: Glance image ID
-	AllowedMeasurement string      `json:"allowed_measurement,omitempty"` // Stage 1: SNP launch measurement
-	TenantPubKey       string      `json:"tenant_pubkey"`                 // base64 Ed25519
-	TenantSealKey      string      `json:"tenant_seal_key"`               // base64 X25519
-	Policy             *RentPolicy `json:"policy,omitempty"`              // Warrant rent policy (spec 10)
-	Sig                string      `json:"sig,omitempty"`
+	Version            string     `json:"pocc"`
+	RequestID          string     `json:"request_id"`
+	Resource           Resource   `json:"resource"`
+	Period             Period     `json:"period"`
+	MaxRateMicros      int64      `json:"max_rate_micros_per_s"` // currency micro-units per second
+	Currency           string     `json:"currency"`
+	Attestation        string     `json:"attestation"`
+	AllowedImage       string     `json:"allowed_image,omitempty"`       // Stage 0: Glance image ID
+	AllowedMeasurement string     `json:"allowed_measurement,omitempty"` // Stage 1: SNP launch measurement
+	TenantPubKey       string     `json:"tenant_pubkey"`                 // base64 Ed25519
+	TenantSealKey      string     `json:"tenant_seal_key"`               // base64 X25519
+	MeterSpec          *MeterSpec `json:"meter_spec,omitempty"`          // which proofs count (escrow mode)
+	Consumer           string     `json:"consumer,omitempty"`            // "warrant" or empty
+	Policy             RawPolicy  `json:"policy,omitempty"`              // the consumer's policy, as approved
+	PolicyHash         string     `json:"policy_hash,omitempty"`         // the consumer's hash of it, hex
+	Sig                string     `json:"sig,omitempty"`
 }
 
 // BeaconInfo identifies the public randomness beacon.
@@ -189,16 +192,17 @@ type Billed struct {
 
 // Receipt is step 7: everything the verifier needs, signed by the provider.
 type Receipt struct {
-	Version    string       `json:"pocc"`
-	Request    Request      `json:"request"`
-	Order      Order        `json:"order"`
-	Boot       BootProof    `json:"boot"`
-	Heartbeats []Heartbeat  `json:"heartbeats"`
-	Proofs     []BatchProof `json:"proofs"` // proofs[0] for the boot entry, proofs[i] for heartbeat i
-	Openings   []Opening    `json:"openings,omitempty"`
-	NovaServer *NovaServer  `json:"nova_server,omitempty"`
-	Billed     Billed       `json:"billed"`
-	Sig        string       `json:"sig,omitempty"`
+	Version     string       `json:"pocc"`
+	Request     Request      `json:"request"`
+	Order       Order        `json:"order"`                  // offline mode
+	EscrowOrder *EscrowOrder `json:"escrow_order,omitempty"` // escrow mode: the consumer's order is the order
+	Boot        BootProof    `json:"boot"`
+	Heartbeats  []Heartbeat  `json:"heartbeats"`
+	Proofs      []BatchProof `json:"proofs"` // proofs[0] for the boot entry, proofs[i] for heartbeat i
+	Openings    []Opening    `json:"openings,omitempty"`
+	NovaServer  *NovaServer  `json:"nova_server,omitempty"`
+	Billed      Billed       `json:"billed"`
+	Sig         string       `json:"sig,omitempty"`
 }
 
 // Verdict is step 8: the verifier's result.

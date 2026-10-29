@@ -1,11 +1,15 @@
-// Package verify implements the PoCC verifier (spec section 5) and turns a
-// verdict into per-hour usage records for Warrant's rent case (spec section 10).
+// Package verify implements the PoCC verifier (spec section 5) in two modes:
+// offline (a provider-signed Order) and escrow (the consumer's escrow order is
+// the order and h0 derives from it, integration spec section 5). It also turns
+// a verdict into PoCC-native per-hour usage records; consumer adapters
+// translate those.
 package verify
 
 import (
 	"context"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/mnemonik-xyz/pocc/pkg/anchor"
@@ -14,7 +18,7 @@ import (
 )
 
 // VerifierVersion is written into every verdict.
-const VerifierVersion = "pocc-verify/0.2.0"
+const VerifierVersion = "pocc-verify/0.3.0"
 
 // Statuses.
 const (
@@ -33,7 +37,32 @@ type Env struct {
 	Beacon      beacon.Source  // the verifier's own beacon access
 	Anchors     anchor.Checker // checks anchors and returns their time
 	Forks       ForkChecker    // optional
-	ProviderKey string         // optional pin; otherwise the order's key is used
+	ProviderKey string         // optional pin; otherwise the order's key is used (offline mode)
+	// KnownBeacons maps a beacon chain hash to its info (escrow mode). Default: drand quicknet.
+	KnownBeacons map[string]pocc.BeaconInfo
+}
+
+// ConsumerCheck validates a consumer's policy inside a Request and returns the
+// price per second it fixes. Adapters register one per consumer name.
+type ConsumerCheck func(q pocc.Request) (rateMicros int64, err error)
+
+var (
+	consumersMu sync.RWMutex
+	consumers   = map[string]ConsumerCheck{}
+)
+
+// RegisterConsumer makes a consumer's policy check available to the verifier.
+func RegisterConsumer(name string, check ConsumerCheck) {
+	consumersMu.Lock()
+	defer consumersMu.Unlock()
+	consumers[name] = check
+}
+
+func consumerCheck(name string) (ConsumerCheck, bool) {
+	consumersMu.RLock()
+	defer consumersMu.RUnlock()
+	c, ok := consumers[name]
+	return c, ok
 }
 
 type checker struct {
@@ -53,7 +82,7 @@ func (c *checker) check(ok bool, code string) bool {
 // failure, so one verdict lists every failure code.
 func Verify(ctx context.Context, R *pocc.Receipt, env Env) pocc.Verdict {
 	c := &checker{seen: map[string]bool{}}
-	q, o := R.Request, R.Order
+	q := R.Request
 	v := pocc.Verdict{Version: pocc.Version, VerifierVersion: VerifierVersion,
 		PerHourS: map[string]int64{}, Codes: []string{}}
 	if h, err := pocc.DocHash(pocc.TagReceipt, R); err == nil {
@@ -62,21 +91,57 @@ func Verify(ctx context.Context, R *pocc.Receipt, env Env) pocc.Verdict {
 
 	// Ordered.
 	c.check(pocc.VerifyDoc(q.TenantPubKey, pocc.TagRequest, q, q.Sig) == nil, "E_REQUEST_SIG")
-	providerKey := o.ProviderPubKey
-	if env.ProviderKey != "" {
-		c.check(env.ProviderKey == providerKey, "E_ORDER")
-		providerKey = env.ProviderKey
-	}
-	reqHash, _ := pocc.DocHash(pocc.TagRequest, q)
-	c.check(pocc.VerifyDoc(providerKey, pocc.TagOrder, o, o.Sig) == nil &&
-		o.RequestHash == pocc.Hex(reqHash) && o.RateMicros <= q.MaxRateMicros &&
-		o.Currency == q.Currency, "E_ORDER")
-	c.check(checkPolicy(q, o) == nil, "E_POLICY")
-	h0, _ := pocc.DocHash(pocc.TagOrder, o)
-	info := o.Beacon
-	slot := uint64(o.SlotRounds)
-	if slot == 0 {
-		slot = 20
+	var (
+		h0         []byte
+		info       pocc.BeaconInfo
+		slot       uint64
+		bracket    int64
+		rate       int64
+		escrowMode = R.EscrowOrder != nil
+		signerKey  string // who signs the receipt, if anyone
+	)
+	if escrowMode {
+		// Escrow mode: the consumer's escrow order is the order (decision 23).
+		known := env.KnownBeacons
+		if known == nil {
+			known = map[string]pocc.BeaconInfo{beacon.Quicknet.ChainHash: beacon.Quicknet}
+		}
+		c.check(pocc.CheckMeterSpec(q) == nil, "E_POLICY")
+		c.check(pocc.HourAligned(q.Period), "E_PERIOD")
+		rate = q.MaxRateMicros
+		if chk, ok := consumerCheck(q.Consumer); c.check(ok, "E_CONSUMER") {
+			r, err := chk(q)
+			if c.check(err == nil, "E_POLICY") {
+				rate = r
+			}
+		}
+		b, err := pocc.EscrowBinding(q, *R.EscrowOrder, known)
+		if c.check(err == nil, "E_BIND") {
+			h0, info, slot, bracket = b.H0, b.Beacon, b.SlotRounds, b.BracketS
+		} else {
+			info, slot, bracket = beacon.Quicknet, 20, 30
+		}
+		signerKey = env.ProviderKey
+	} else {
+		o := R.Order
+		signerKey = o.ProviderPubKey
+		if env.ProviderKey != "" {
+			c.check(env.ProviderKey == signerKey, "E_ORDER")
+			signerKey = env.ProviderKey
+		}
+		reqHash, _ := pocc.DocHash(pocc.TagRequest, q)
+		c.check(pocc.VerifyDoc(signerKey, pocc.TagOrder, o, o.Sig) == nil &&
+			o.RequestHash == pocc.Hex(reqHash) && o.RateMicros <= q.MaxRateMicros &&
+			o.Currency == q.Currency, "E_ORDER")
+		if q.MeterSpec != nil {
+			c.check(pocc.CheckMeterSpec(q) == nil && q.MeterSpec.BeaconChainHash == o.Beacon.ChainHash &&
+				q.MeterSpec.SlotRounds == o.SlotRounds && q.MeterSpec.BracketS == o.BracketS, "E_POLICY")
+		}
+		h0, _ = pocc.DocHash(pocc.TagOrder, o)
+		info, slot, bracket, rate = o.Beacon, uint64(o.SlotRounds), o.BracketS, o.RateMicros
+		if slot == 0 {
+			slot = 20
+		}
 	}
 
 	// Genuine.
@@ -106,7 +171,6 @@ func Verify(ctx context.Context, R *pocc.Receipt, env Env) pocc.Verdict {
 		c.check(false, "E_ORDER")
 	}
 	c.check(len(R.Proofs) == len(R.Heartbeats)+1, "E_LOG")
-	bracket := o.BracketS
 	// timely reports whether an entry was anchored within the bracket after its
 	// round. A late entry earns no credit; an anchor before its round is fatal.
 	timely := func(p pocc.BatchProof, leaf []byte, round uint64) bool {
@@ -154,7 +218,7 @@ func Verify(ctx context.Context, R *pocc.Receipt, env Env) pocc.Verdict {
 			if !tStart.Before(start) && !tEnd.After(end) {
 				secs := int64(hb.Round-prevR) * info.PeriodS
 				credited += secs
-				v.PerHourS[tEnd.Truncate(time.Hour).Format(time.RFC3339)] += secs
+				v.PerHourS[tEnd.Add(-time.Second).Truncate(time.Hour).Format(time.RFC3339)] += secs
 			}
 		} else if hb.Round != beacon.NextSlot(prevR, slot) {
 			v.Gaps++
@@ -187,12 +251,15 @@ func Verify(ctx context.Context, R *pocc.Receipt, env Env) pocc.Verdict {
 		}
 	}
 
-	// Billed.
-	c.check(R.Billed.Seconds <= credited, "E_OVERBILL")
-	c.check(R.Billed.AmountMicros <= o.RateMicros*R.Billed.Seconds, "E_AMOUNT")
-	c.check(pocc.VerifyDoc(providerKey, pocc.TagReceipt, R, R.Sig) == nil, "E_RECEIPT_SIG")
+	// Billed. In escrow mode billing happens through the consumer's notes; the
+	// receipt's billed fields and signature are checked only when present.
+	if !escrowMode || R.Billed.Seconds != 0 || R.Billed.AmountMicros != 0 || R.Sig != "" {
+		c.check(R.Billed.Seconds <= credited, "E_OVERBILL")
+		c.check(R.Billed.AmountMicros <= rate*R.Billed.Seconds, "E_AMOUNT")
+		c.check(signerKey != "" && pocc.VerifyDoc(signerKey, pocc.TagReceipt, R, R.Sig) == nil, "E_RECEIPT_SIG")
+	}
 
-	v.MaxAmountMicros = o.RateMicros * credited
+	v.MaxAmountMicros = rate * credited
 	v.Codes = c.codes
 	if v.Codes == nil {
 		v.Codes = []string{}
@@ -206,36 +273,6 @@ func Verify(ctx context.Context, R *pocc.Receipt, env Env) pocc.Verdict {
 		v.Status = StatusValid
 	}
 	return v
-}
-
-// checkPolicy compares the tenant-signed policy with the order and request.
-func checkPolicy(q pocc.Request, o pocc.Order) error {
-	p := q.Policy
-	if p == nil {
-		return fmt.Errorf("request carries no policy")
-	}
-	d := p.Delivery
-	switch {
-	case p.Case != "rent":
-		return fmt.Errorf("policy case %q", p.Case)
-	case d.Kind != pocc.DeliveryKindSignedUsage || d.MeterKey == "":
-		return fmt.Errorf("delivery kind %q", d.Kind)
-	case d.PoCC.Format != pocc.Version:
-		return fmt.Errorf("delivery format %q", d.PoCC.Format)
-	case d.PoCC.Attestation != q.Attestation:
-		return fmt.Errorf("attestation differs")
-	case d.PoCC.AllowedImage != q.AllowedImage || d.PoCC.AllowedMeasurement != q.AllowedMeasurement:
-		return fmt.Errorf("image differs")
-	case d.PoCC.Flavor != q.Resource.Flavor:
-		return fmt.Errorf("flavor differs")
-	case d.PoCC.BeaconChainHash != o.Beacon.ChainHash:
-		return fmt.Errorf("beacon differs")
-	case d.PoCC.SlotRounds != o.SlotRounds || d.PoCC.BracketS != o.BracketS:
-		return fmt.Errorf("slot or bracket differs")
-	case d.PricePerUnit != o.RateMicros:
-		return fmt.Errorf("price differs")
-	}
-	return nil
 }
 
 func checkProof(ctx context.Context, env Env, p pocc.BatchProof, leaf []byte) (int64, error) {
@@ -253,15 +290,24 @@ func checkProof(ctx context.Context, env Env, p pocc.BatchProof, leaf []byte) (i
 	return env.Anchors.Check(ctx, p.Anchor, root)
 }
 
-// UsageRecords turns a verdict into one signed usage record per billing hour,
-// for Warrant's signed_usage delivery check. An INVALID verdict yields none.
+// UsageRecords turns a verdict into one PoCC-native usage record per billing
+// hour. sign may be nil (unsigned records for an adapter to translate). An
+// INVALID verdict yields none. Hour indices count from the period start.
 func UsageRecords(R *pocc.Receipt, v pocc.Verdict, sign func(any) (string, error)) ([]pocc.UsageRecord, error) {
-	if v.Status == StatusInvalid || R.Request.Policy == nil {
+	if v.Status == StatusInvalid {
 		return nil, nil
 	}
-	ph, err := pocc.DocHash(pocc.TagPolicy, R.Request.Policy)
+	start, err := time.Parse(time.RFC3339, R.Request.Period.Start)
 	if err != nil {
 		return nil, err
+	}
+	meterSpec := ""
+	if R.Request.MeterSpec != nil {
+		h, err := pocc.MeterSpecHash(*R.Request.MeterSpec)
+		if err != nil {
+			return nil, err
+		}
+		meterSpec = pocc.Hex(h)
 	}
 	hours := make([]string, 0, len(v.PerHourS))
 	for h := range v.PerHourS {
@@ -275,11 +321,14 @@ func UsageRecords(R *pocc.Receipt, v pocc.Verdict, sign func(any) (string, error
 			return nil, err
 		}
 		s := v.PerHourS[h]
-		rec := pocc.UsageRecord{Version: pocc.Version, Lease: R.Order.OrderID, PolicyHash: pocc.Hex(ph),
-			WindowStart: t.Unix(), WindowEnd: t.Add(time.Hour).Unix(), Unit: R.Request.Policy.Delivery.Unit,
-			Units: s, Assurance: v.Assurance, UptimeBP: s * 10000 / 3600, ReceiptHash: v.ReceiptHash}
-		if rec.Sig, err = sign(rec); err != nil {
-			return nil, err
+		rec := pocc.UsageRecord{Version: pocc.Version, Lease: pocc.Hex(pocc.LeaseID(R.Request)),
+			Hour: int64(t.Sub(start) / time.Hour), WindowStart: t.Unix(), WindowEnd: t.Add(time.Hour).Unix(),
+			Unit: "instance-second", Units: s, Assurance: v.Assurance, UptimeBP: s * 10000 / 3600,
+			MeterSpec: meterSpec, ReceiptHash: v.ReceiptHash}
+		if sign != nil {
+			if rec.Sig, err = sign(rec); err != nil {
+				return nil, err
+			}
 		}
 		out = append(out, rec)
 	}

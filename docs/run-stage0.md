@@ -65,6 +65,32 @@ bin/pocc-verify -receipt receipt.json -anchor-key <anchor key> -out verdict.json
 bin/pocc-broker settle
 ```
 
+## Escrow mode (with a Warrant policy)
+
+The same cycle with the consumer's escrow order as the order (integration spec,
+decision 23). The provider signs no PoCC order; `h0` derives from the escrow order.
+
+```sh
+# 4'. Tenant: request carrying the Warrant rent policy. policy_hash comes from warrant-host hash.
+bin/pocc-broker request -keys tenant.json -image <image ID> -start 2026-11-02T09:00:00Z -end 2026-11-02T17:00:00Z \
+  -price 1100 -notary http://<notary>:8080 -anchor-key <anchor key> \
+  -consumer warrant -meter-key <guardrail key, SEC1 hex> -policy-hash <hex> \
+  -chain-id 5042002 -vault <escrow> -token 0x3600000000000000000000000000000000000000
+# (or -policy policy.json to carry an approved policy as is)
+
+# 5'. Buyer funds the escrow order; provider accepts. The order id comes from the chain.
+# 6'. Provider: agent VM bound to the escrow order.
+bin/pocc-broker provision -role agent -image <image ID> -network <net ID> -ref <commit> \
+  -escrow-chain-id 5042002 -escrow <escrow> -escrow-order-id <orderId>
+# 7'. Provider: receipt (no billed fields: billing is through Warrant notes).
+bin/pocc-broker receipt -agent <agent key> -server $SERVER -billed-seconds 0 \
+  -escrow-chain-id 5042002 -escrow <escrow> -escrow-order-id <orderId>
+# 8'. Tenant: verify and write Warrant usage records; sign them with Warrant's tool.
+bin/pocc-verify -receipt receipt.json -anchor-key <anchor key> -provider-key <provider signing_pub> \
+  -warrant-records warrant-records.json \
+  -warrant-sign-cmd "warrant-evidence sign-usage {key} {in} {out}" -warrant-sign-key meter.key
+```
+
 ## Costs to expect
 
 Two of the smallest VMs, two 5 GB volumes and one floating IP for the length of the

@@ -37,12 +37,14 @@ type Submitter interface {
 // Agent holds the chain state. It is not safe for concurrent use.
 type Agent struct {
 	Request  pocc.Request
-	Order    pocc.Order
+	Binding  pocc.Binding
 	ServerID string
-	Beacon   beacon.Source
-	Counters Counters
-	Notary   Submitter
-	Logf     func(string, ...any)
+	// ProviderSealKey, when set, also receives the disclosure seed.
+	ProviderSealKey string
+	Beacon          beacon.Source
+	Counters        Counters
+	Notary          Submitter
+	Logf            func(string, ...any)
 
 	priv      ed25519.PrivateKey
 	pub       string
@@ -55,26 +57,15 @@ type Agent struct {
 	done      bool
 }
 
-// New checks that the order belongs to the request and prepares an agent.
-func New(req pocc.Request, order pocc.Order, serverID string, b beacon.Source, c Counters, n Submitter) (*Agent, error) {
-	rh, err := pocc.DocHash(pocc.TagRequest, req)
-	if err != nil {
-		return nil, err
-	}
-	if order.RequestHash != pocc.Hex(rh) {
-		return nil, errors.New("order does not belong to this request")
-	}
-	if err := pocc.VerifyDoc(order.ProviderPubKey, pocc.TagOrder, order, order.Sig); err != nil {
-		return nil, fmt.Errorf("order signature: %w", err)
-	}
-	h0, err := pocc.DocHash(pocc.TagOrder, order)
-	if err != nil {
-		return nil, err
+// New prepares an agent for a binding (from an offline Order or an escrow order).
+func New(req pocc.Request, bind pocc.Binding, serverID string, b beacon.Source, c Counters, n Submitter) (*Agent, error) {
+	if len(bind.H0) != 32 || bind.SlotRounds == 0 {
+		return nil, errors.New("incomplete binding")
 	}
 	if serverID == "" {
 		return nil, errors.New("server id is empty")
 	}
-	return &Agent{Request: req, Order: order, ServerID: serverID, Beacon: b, Counters: c, Notary: n, h0: h0,
+	return &Agent{Request: req, Binding: bind, ServerID: serverID, Beacon: b, Counters: c, Notary: n, h0: bind.H0,
 		Logf: func(string, ...any) {}}, nil
 }
 
@@ -88,7 +79,7 @@ func (a *Agent) Boot(ctx context.Context, r0 uint64) (pocc.BootProof, error) {
 	if a.Request.Attestation != pocc.AttestationNone {
 		return pocc.BootProof{}, fmt.Errorf("attestation %q is not supported by this build", a.Request.Attestation)
 	}
-	if r0%uint64(a.Order.SlotRounds) != 0 {
+	if r0%a.Binding.SlotRounds != 0 {
 		return pocc.BootProof{}, fmt.Errorf("boot round %d is not a slot", r0)
 	}
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
@@ -99,7 +90,11 @@ func (a *Agent) Boot(ctx context.Context, r0 uint64) (pocc.BootProof, error) {
 	if _, err := rand.Read(seed); err != nil {
 		return pocc.BootProof{}, err
 	}
-	seedEnc, err := pocc.SealSeed(seed, a.Request.TenantSealKey, a.Order.ProviderSealKey)
+	recipients := []string{a.Request.TenantSealKey}
+	if a.ProviderSealKey != "" {
+		recipients = append(recipients, a.ProviderSealKey)
+	}
+	seedEnc, err := pocc.SealSeed(seed, recipients...)
 	if err != nil {
 		return pocc.BootProof{}, err
 	}
@@ -138,7 +133,7 @@ func (a *Agent) Beat(ctx context.Context, r uint64, final bool) (pocc.Heartbeat,
 		}
 		a.confirm(*a.pending)
 	}
-	if r <= a.prevRound || r%uint64(a.Order.SlotRounds) != 0 {
+	if r <= a.prevRound || r%a.Binding.SlotRounds != 0 {
 		return pocc.Heartbeat{}, fmt.Errorf("round %d is not a slot after %d", r, a.prevRound)
 	}
 	rnd, err := a.Beacon.Get(ctx, r)
@@ -201,11 +196,11 @@ func (a *Agent) Run(ctx context.Context, info pocc.BeaconInfo, stop <-chan struc
 	if err != nil {
 		return fmt.Errorf("period end: %w", err)
 	}
-	slotRounds := uint64(a.Order.SlotRounds)
+	slotRounds := a.Binding.SlotRounds
 	period := time.Duration(info.PeriodS) * time.Second
 	// A slot reached more than this late is skipped: its heartbeat could not be
 	// anchored within the bracket anyway.
-	lateRounds := uint64(a.Order.BracketS/info.PeriodS) / 2
+	lateRounds := uint64(a.Binding.BracketS/info.PeriodS) / 2
 	now := a.latestRound(ctx, info)
 	r0 := beacon.NextSlot(now, slotRounds)
 	a.Logf("waiting for slot %d to boot", r0)

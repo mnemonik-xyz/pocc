@@ -90,7 +90,7 @@ record is the only object that crosses the line, and it is Warrant-native.
 | Policy | `RentPolicy` carried in the Request | Typed rent policy, hashed with `warrant/policy/v1` over bincode | PoCC carries the exact JSON Warrant approved; it reads only `delivery` |
 | Policy hash | — | `policy_hash` from `warrant-host hash` | PoCC stores it in the Request; never recomputes it |
 | Meter parameters | `delivery.pocc` object | `meter_spec: Hash` inside the delivery section | `meter_spec = H("PoCC/poc/meter-spec", JCS(delivery.pocc))` |
-| Lease | Order ID | `lease_id` (= `poId` on chain) | `lease_id = H("PoCC/poc/lease", request_hash)` |
+| Lease | Order ID | `lease_id` (= `poId` on chain) | `lease_id = H("PoCC/poc/lease", tenant_pubkey, request_id, period)` |
 | Obligation | — | `obligation_id(lease_id, batch)` | One batch = one settlement |
 | Signing keys | Ed25519 (tenant, provider, agent, meter) | secp256k1 SEC1 compressed, low-S ECDSA | Meter, acceptance and registry keys are secp256k1; PoCC keeps Ed25519 for its own artifacts |
 | Hashing | SHA-256 over length-prefixed parts, ASCII tags | SHA-256 over `tagged_bytes` (u64 LE lengths, bincode) | Not shared; each side hashes its own objects |
@@ -202,14 +202,15 @@ object in the Request and compares it with the policy's; on mismatch it reports
 
 ## 5. Identifiers
 
-One lease ties the PoCC order, the escrow order, the notes and the usage records
-together. It is derived from the tenant-signed Request, so it exists before either
-order and both can carry it.
+One lease ties the escrow order, the notes and the usage records together. It is
+derived from fields of the tenant-signed Request that do not include the policy
+(tenant key, request id, period), so the policy inside the Request can carry it and
+the escrow order can be funded before the VM exists.
 
 | Identifier | Definition | Appears in |
 |---|---|---|
 | `request_hash` | `H(PoCC/poc/request, JCS(request))` | `lease_id` derivation |
-| `lease_id` | `H(PoCC/poc/lease, request_hash)`, 32 bytes | Policy (`lease_id`), escrow order (`poId`), notes, usage records |
+| `lease_id` | `H(PoCC/poc/lease, tenant_pubkey, request_id, period.start, period.end)`, 32 bytes (decision 27: it cannot hash the request, because the policy inside the request carries it) | Policy (`lease_id`), escrow order (`poId`), notes, usage records |
 | `policy_hash` | Warrant: `hash_tagged(warrant/policy/v1, policy)` | Request (copied), escrow order, journal |
 | `deliverySpecHash` | Warrant: hash of the typed delivery section | Escrow order at `offer`, journal |
 | `h0` | `H(PoCC/poc/order, policy_hash, lease_id, chain_id, escrow, orderId)` | Boot proof e0, every heartbeat |
@@ -234,8 +235,13 @@ from the policy and the chain and refuses any other. The standalone PoCC Order r
 only as the offline mode for running PoCC without an escrow (the Stage 0 demo).
 
 **Hour index.** Hour k covers `[period.start + k*3600, period.start + (k+1)*3600)`. The
-period start is aligned to a clock hour by the broker so that PoCC's per-hour credit
-and Warrant's notes count the same hours.
+period start is aligned to a clock hour by the broker (the verifier reports `E_PERIOD`
+otherwise), so that PoCC's per-hour credit and Warrant's notes count the same hours. A
+credited interval belongs to the hour in which it ends, with an interval ending exactly
+on the hour counted in the hour before. drand slots fall at :24 past each minute, so the
+first hour of a period credits at most 3,540 s and a final heartbeat just past the last
+hour adds one 60 s interval to hour k+1; the policy's `min_uptime_bp` decides what those
+edge hours are worth.
 
 ## 6. The proof path, as the policy states it
 
@@ -544,4 +550,4 @@ cost, are in `docs/decisions.md` (entries 15–25).
 - [x] PoCC core stays consumer-agnostic; Warrant code in `pkg/adapter/warrant` (24).
 - [x] One guardrail key for the registry, acceptance and meter roles in v1 (25).
 
-Phase A is open for review: PE-1 is policy-execution [#76](https://github.com/mnemonik-xyz/policy-execution/pull/76), W-1 is warrant [#16](https://github.com/mnemonik-xyz/warrant/pull/16). Both are drafts; the owner merges.
+Phase B on the PoCC side is implemented (PC-1, PC-2: commit after this one). Phase A is open for review: PE-1 is policy-execution [#76](https://github.com/mnemonik-xyz/policy-execution/pull/76), W-1 is warrant [#16](https://github.com/mnemonik-xyz/warrant/pull/16). Both are drafts; the owner merges.

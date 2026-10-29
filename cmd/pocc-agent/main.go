@@ -22,10 +22,12 @@ import (
 	"github.com/mnemonik-xyz/pocc/pkg/pocc"
 )
 
-// Config is /etc/pocc/agent.json, written by cloud-init.
+// Config is /etc/pocc/agent.json, written by cloud-init. Exactly one of
+// Order (offline mode) and EscrowOrder (escrow mode) is set.
 type Config struct {
-	Request pocc.Request `json:"request"`
-	Order   pocc.Order   `json:"order"`
+	Request     pocc.Request      `json:"request"`
+	Order       *pocc.Order       `json:"order,omitempty"`
+	EscrowOrder *pocc.EscrowOrder `json:"escrow_order,omitempty"`
 }
 
 func main() {
@@ -45,10 +47,28 @@ func main() {
 	if id == "" {
 		log.Fatal("cannot determine the server ID; pass -server-id")
 	}
-	a, err := agent.New(cfg.Request, cfg.Order, id, beacon.NewHTTP(cfg.Order.Beacon),
-		agent.ProcCounters{}, agent.HTTPNotary{URL: cfg.Order.Notary.URL})
+	var (
+		bind pocc.Binding
+		err  error
+	)
+	switch {
+	case cfg.EscrowOrder != nil:
+		bind, err = pocc.EscrowBinding(cfg.Request, *cfg.EscrowOrder, beacon.Known)
+	case cfg.Order != nil:
+		bind, err = pocc.OfflineBinding(cfg.Request, *cfg.Order)
+	default:
+		err = fmt.Errorf("config has neither order nor escrow_order")
+	}
 	if err != nil {
 		log.Fatal(err)
+	}
+	a, err := agent.New(cfg.Request, bind, id, beacon.NewHTTP(bind.Beacon),
+		agent.ProcCounters{}, agent.HTTPNotary{URL: bind.NotaryURL})
+	if err != nil {
+		log.Fatal(err)
+	}
+	if cfg.Order != nil {
+		a.ProviderSealKey = cfg.Order.ProviderSealKey
 	}
 	a.Logf = log.Printf
 
@@ -60,7 +80,7 @@ func main() {
 		log.Print("signal received: sending the final heartbeat at the next slot")
 		close(stop)
 	}()
-	if err := a.Run(context.Background(), cfg.Order.Beacon, stop); err != nil {
+	if err := a.Run(context.Background(), bind.Beacon, stop); err != nil {
 		log.Fatal(err)
 	}
 	log.Print("final heartbeat sent; agent key erased")

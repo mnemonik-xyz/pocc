@@ -204,7 +204,22 @@ length-prefixed (see [deviations](#8-deviations-from-the-spec)).
 | `pkg/agent` | Boot proof, heartbeat loop, counters, final heartbeat | Done |
 | `cmd/*` | `pocc-agent`, `pocc-notary`, `pocc-verify`, `pocc-broker` | Done; smoke-tested locally against real drand |
 | `internal/sim` | Simulated acceptance tests T1, T3, T4, T6–T9 plus Stage 0 checks | Done |
-| `pkg/openstack` | Minimal OpenStack client for the broker | Done; not yet run on amnezia.cloud |
+| `pkg/openstack` | Minimal OpenStack client for the broker | Done; used in the 2026-10-28 live test |
+| `pkg/adapter/warrant` | The only package that knows Warrant's shapes: policy check, usage records as Warrant JSON, external signer | Done (PC-1, PC-2); awaits Warrant's `sign-usage` and `check rent` |
+
+## 7a. Two modes: offline and escrow
+
+| | Offline mode | Escrow mode (integration spec) |
+|---|---|---|
+| The order | A provider-signed PoCC `Order` | The consumer's escrow order: `{chain_id, escrow, order_id}` |
+| `h0` | `H(order ‖ JCS(Order))` | `H(order ‖ policy_hash ‖ lease_id ‖ chain_id ‖ escrow ‖ orderId)` |
+| Timing and notary | From the Order | From the Request's `meter_spec` |
+| Price | The Order's rate, at most the Request's maximum | The consumer policy's `price_per_unit`, at most the Request's maximum |
+| Policy check | None (a `meter_spec`, if present, must match the Order) | `E_POLICY` from the consumer adapter; `E_PERIOD` unless the period starts on a clock hour |
+| Billing | The receipt's billed fields, signed by the provider | The consumer's notes; the receipt's billed fields are optional and checked when present |
+
+The consumer adapter registers with `verify.RegisterConsumer(name, check)`; the core
+never imports an adapter. `pkg/adapter/warrant` is the first.
 
 ## 8. Deviations from the spec
 
