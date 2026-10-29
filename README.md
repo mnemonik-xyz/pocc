@@ -13,6 +13,9 @@ proving cycle, [docs/run-stage0.md](docs/run-stage0.md) to run a cycle on OpenSt
 [docs/live-test-plan.md](docs/live-test-plan.md) for the live test on amnezia.cloud
 (reproducible with `scripts/live-test.sh`).
 
+[docs/warrant-integration.md](docs/warrant-integration.md) is the proposal for
+making PoCC the meter of Warrant's rent case.
+
 ## How it works, in one paragraph
 
 The tenant signs a request that carries a Warrant rent policy. The provider signs
