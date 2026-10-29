@@ -14,7 +14,8 @@ proving cycle, [docs/run-stage0.md](docs/run-stage0.md) to run a cycle on OpenSt
 (reproducible with `scripts/live-test.sh`).
 
 [docs/warrant-integration.md](docs/warrant-integration.md) is the proposal for
-making PoCC the meter of Warrant's rent case.
+making PoCC the meter of Warrant's rent case; [docs/decisions.md](docs/decisions.md)
+logs every design decision with its alternatives and reversal cost.
 
 ## How it works, in one paragraph
 

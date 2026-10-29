@@ -1,7 +1,9 @@
 # PoCC × Warrant integration — Spec v0.1
 
-Status: proposal, 2026-10-29. Reviewed in the Claude doc "Proof of Cloud Compute
-(PoCC) — PoC spec", tab "Warrant integration v0.1". Decisions in section 12 are open.
+Status: v0.1 reviewed by the owner on 2026-10-29; decisions D-A to D-H taken (see
+`docs/decisions.md`, entries 15–25). The owner's review notes and the answers are in
+the Claude doc "Proof of Cloud Compute (PoCC) — PoC spec", tab "Warrant integration
+v0.1".
 
 PoCC becomes the meter of Warrant's rent case: the tenant's policy names the PoCC
 verifier as `meter_key`, the verifier turns anchored heartbeats into signed usage
@@ -95,11 +97,26 @@ record is the only object that crosses the line, and it is Warrant-native.
 | Time | drand rounds, anchor block time | Block time on Arc for windows and `settleBy` | The anchor chain is Arc, so both read the same clock |
 | Chain | Dev anchor today | Arc testnet 5042002, mainnet 5042; gas in USDC | PoCC notary posts roots to Arc |
 
-**Key inventory after integration.** The tenant holds four keys: wallet (funds
-orders), registry (vouches for the provider), acceptance (signs notes) and meter (signs
-usage records). The last three are secp256k1 and can live in the buyer guardrail's
-keystore. The tenant's PoCC Ed25519 key still signs the Request. The provider holds its
-payout key and its PoCC key. The agent key is born and dies inside the VM.
+**Key inventory after integration (decisions 24, 25).** The buyer holds two keys: the
+wallet (funds orders) and the guardrail key (secp256k1), which fills the registry,
+acceptance and meter roles in v1 and signs the Request through `warrant-evidence`. The
+policy keeps the three role fields so they can diverge later. The provider holds its
+payout key. An Ed25519 key is born and dies inside each VM (the agent), and the notary
+holds the dev anchor key until the Arc anchor replaces it. Warrant-specific code in
+PoCC lives in one adapter package, `pkg/adapter/warrant`, which turns a verdict into
+Warrant's usage record; PoCC's core artifacts stay consumer-agnostic, so another escrow
+or a billing system gets its own adapter.
+
+**Alternatives to the buyer as the meter, and a malicious buyer.** Four other parties
+could hold `meter_key`: the provider (the party being paid, which defeats the purpose),
+an independent metering service (a new entity; later, as a referee), buyer and provider
+co-signing (both online every hour, no gain over the buyer alone), or the zkVM guest
+(`computed_result`, the end state X-1). A malicious buyer can only under-credit: sign
+records for fewer seconds than the receipt proves, or sign nothing. It cannot
+over-credit without paying itself, cannot move funds, and cannot forge the provider's
+evidence. The provider's exposure is one hour, because it challenges for hour k before
+serving hour k+1 and stops when a record or note is missing; and anyone can re-run
+`pocc verify` on the public evidence and show the under-credit.
 
 ## 4. The rent policy
 
@@ -191,22 +208,30 @@ order and both can carry it.
 
 | Identifier | Definition | Appears in |
 |---|---|---|
-| `request_hash` | `H(PoCC/poc/request, JCS(request))` | PoCC Order |
+| `request_hash` | `H(PoCC/poc/request, JCS(request))` | `lease_id` derivation |
 | `lease_id` | `H(PoCC/poc/lease, request_hash)`, 32 bytes | Policy (`lease_id`), escrow order (`poId`), notes, usage records |
 | `policy_hash` | Warrant: `hash_tagged(warrant/policy/v1, policy)` | Request (copied), escrow order, journal |
 | `deliverySpecHash` | Warrant: hash of the typed delivery section | Escrow order at `offer`, journal |
-| `h0` | `H(PoCC/poc/order, JCS(order))` | Boot proof e0, every heartbeat |
+| `h0` | `H(PoCC/poc/order, policy_hash, lease_id, chain_id, escrow, orderId)` | Boot proof e0, every heartbeat |
 | `orderId` (chain) | `keccak256(chainId, escrow, customer, policyHash, lease_id)` | Escrow |
 | `note_id(lease_id, k)` | `hash_tagged(warrant/note/v1, (lease_id, k))`; k = hour index from the period start | Note `task_id` |
 | `obligation_id(lease_id, b)` | `hash_tagged(warrant/obligation/v1, (lease_id, b))`; batch b = hours `b*batch_size` onward | Request `task_id`, journal |
 | `receipt_hash` | `H(PoCC/poc/receipt, JCS(receipt))` | Usage record `deliverable_hash` |
 
-**Two orders, one lease.** The PoCC Order (provider-signed, carries `request_hash`,
-rate, beacon, notary) and the escrow order (buyer-funded, carries `policyHash`,
-`deliverySpecHash`, `lease_id`, ceiling, deadlines) describe the same deal. The policy
-inside the Request fixes `lease_id`, so the provider can check before boot that an
-escrow order exists for it and is `Accepted`, and the verifier can check that the
-record it signs names the lease the escrow will pay.
+**One order (decision 23).** The escrow order is the order. It carries `policyHash`,
+`deliverySpecHash`, `lease_id`, the ceiling and the deadlines, and the provider's
+`accept(orderId)` is its acceptance. Everything the standalone PoCC Order used to carry
+has a home: the rate is `price_per_unit` in the policy; beacon, slot, bracket and
+anchor are in `meter_spec`; the notary address sits in the `pocc` object. The boot
+binding is derived from the escrow order:
+
+```latex
+h_0 = H(\texttt{PoCC/poc/order} \,\|\, \text{policy\_hash} \,\|\, \text{lease\_id} \,\|\, \text{chain\_id} \,\|\, \text{escrow} \,\|\, \text{orderId})
+```
+
+The agent reads the five values from the config drive; the verifier recomputes `h0`
+from the policy and the chain and refuses any other. The standalone PoCC Order remains
+only as the offline mode for running PoCC without an escrow (the Stage 0 demo).
 
 **Hour index.** Hour k covers `[period.start + k*3600, period.start + (k+1)*3600)`. The
 period start is aligned to a clock hour by the broker so that PoCC's per-hour credit
@@ -236,7 +261,7 @@ policy cannot exist without a delivery proof.
 | 1 | Owner approves the policy; `policy_hash` and `deliverySpecHash` are computed | — | Policy JSON, two hashes | `warrant-host hash`; the buyer's own review |
 | 2 | Tenant signs the Request carrying the policy and `policy_hash` | — | Request, `request_hash`, `lease_id` | Provider (before order), PoCC verifier |
 | 3 | Buyer funds the escrow order: `offer(policyHash, deliverySpecHash, lease_id, ceiling, deadlines)` | `scope`, `ceiling`, `validity` | Escrow order | Escrow stores both hashes; nothing settles against other values |
-| 4 | Provider signs the PoCC Order (`request_hash`, rate = `price_per_unit`, beacon, notary) and boots the VM with `h0` | `meter_spec.flavor`, `allowed_image`, `price_per_unit` | Order, `h0` | PoCC verifier: `E_POLICY` on any mismatch with the policy |
+| 4 | Provider calls `accept(orderId)` and boots the VM with `h0` derived from the escrow order | `meter_spec.flavor`, `allowed_image`, `lease_id` | `h0` | PoCC verifier recomputes `h0` from the policy and the chain: `E_BIND` on any other value |
 | 5 | Agent binds to `h0` at boot and signs a heartbeat on every slot | `meter_spec.slot_rounds`, `beacon_chain_hash`, `attestation` | Boot proof, heartbeats | PoCC verifier |
 | 6 | Notary anchors one root per slot on Arc | `meter_spec.anchor`, `bracket_s` | Batch proofs with block times | PoCC verifier: `E_LOG`, late entries earn nothing |
 | 7 | After hour k, provider assembles the receipt so far and presents it with a 402 challenge for note k | `max_note` | Receipt | — |
@@ -307,6 +332,10 @@ bounded by the fact that anyone can re-run the verifier on the receipt named in
 assumption; it is the last work package.
 
 ## 8. Dispute
+
+Not in the first implementation (decision 20): v1 ends a disagreement where Warrant
+ends it today, with `Ask` to the owner and the hour unpaid. The design below is kept
+for the phase that adds it.
 
 A dispute is a signed claim by one party that the proving path produced a wrong result
 for a named hour, together with the evidence a referee needs to re-run that hour.
@@ -422,7 +451,7 @@ contract PoccAnchor {
 | `AnchorRef.ref` | transaction hash |
 | `AnchorRef.time` | the block timestamp; the verifier re-reads it with `eth_getTransactionReceipt` and `eth_getBlockByNumber`, and checks the log's root |
 | Policy pin | `meter_spec.anchor = {chain_id, contract}`; a root on another contract is `E_LOG` |
-| Cost | 1,440 transactions per day for the whole cloud; the notary wallet holds USDC for gas on Arc |
+| Cost | 1,440 transactions per day for the whole cloud, paid by the provider as a cost of selling (decision 21); at an assumed 0.01 USDC per transaction, 14.40 USDC a day, under 1 % of a 3.96 USDC hour across 100 VMs. The Arc gas price is measured in phase D. Cheaper variants: anchor every 5 min with `bracket_s` raised to match, or one Mnemonik-run notary for many providers charging per root |
 | Finality | The verifier treats a block as final after the depth the policy names (`anchor.confirmations`, default 1 on Arc testnet) |
 | Notary identity | Any address may anchor; the root, not the sender, carries trust |
 
@@ -452,11 +481,11 @@ widening of the Verus claim, golden vectors changed only on purpose.
 
 | ID | Package | Depends on | Acceptance |
 |---|---|---|---|
-| PC-1 | Policy section matches section 4: `meter_spec` computed and checked; `policy_hash` and `lease_id` carried; period aligned to clock hours | — | `E_POLICY` tests for each pinned field; simulated T1 still passes |
+| PC-1 | Policy section matches section 4: `meter_spec` computed and checked; `policy_hash` and `lease_id` carried; `h0` derived from the escrow order; period aligned to clock hours; Warrant code isolated in `pkg/adapter/warrant` | — | `E_POLICY` tests for each pinned field; simulated T1 still passes |
 | PC-2 | `pocc-verify` writes Warrant `UsageRecord` JSON per hour (section 7 fields) and calls `warrant-evidence sign-usage` when given a meter key file | PE-4 for signing; JSON shape from PE-3 | Record for the live-test hour round-trips through `warrant-host check rent` |
 | PC-3 | Hourly challenge: `pocc-broker challenge` (provider) emits a 402-style challenge with the receipt so far; `pocc-broker answer` (buyer guardrail) verifies, signs the record and the note | PC-2 | Simulated 8-hour run yields 8 notes and 8 records; an hour with `INVALID` yields neither |
 | PC-4 | Arc anchor: `anchor/evm.go` posts roots to `PoccAnchor` and verifies them from receipts; `AnchorRef.kind = evm` | PE-6 (contract) | Live run on Arc testnet with 1,440 anchors a day under budget; verifier reads times from the chain only |
-| PC-5 | Dispute object, `pocc-broker dispute open|resolve`, referee re-execution, anchoring of disputes | PC-3 | Simulated UNDERCREDIT and OMITTED_ENTRIES disputes resolve to the re-executed value |
+| PC-5 (future) | Dispute object, `pocc-broker dispute open|resolve`, referee re-execution, anchoring of disputes | PC-3 | Simulated UNDERCREDIT and OMITTED_ENTRIES disputes resolve to the re-executed value |
 | PC-6 | Batch builder: `pocc-broker batch` assembles `MeterInput` JSON (notes, records, credential) for `warrant-host prove rent` | PE-4, PC-3 | A batch proves and settles on Arc testnet (ME-3 for a PoCC batch) |
 
 ### warrant
@@ -486,7 +515,7 @@ its outputs are JSON shapes that PE-3 fixes.
 | C. Hourly loop | PC-3, PE-4, PE-7 | After B | Notes and records flow for a simulated day |
 | D. Chain | PE-6, PC-4 | After framework step 3 and the #19 decision | Anchors and settlement on Arc testnet |
 | E. End to end | PE-5, PC-6 | After C and D | One PoCC-metered batch proved and paid on Arc testnet |
-| F. Dispute | PC-5 | After C | Simulated disputes resolve by re-execution |
+| F. Dispute (future) | PC-5 | When the owner lifts decision 20 | Simulated disputes resolve by re-execution |
 | G. Verifier in the guest | X-1 | After E | Meter key removed |
 
 | Risk | Effect | Mitigation |
@@ -498,17 +527,22 @@ its outputs are JSON shapes that PE-3 fixes.
 | The meter key is the buyer's: a buyer could under-credit | Provider loses hours | Public re-execution and the dispute of section 8; the referee key; X-1 removes the issue |
 | Verus scope creep | A wider claim than the proof covers | New gates are tested, not proved; the spec says so, as the solver and invoice checkers do |
 
-## 12. Decisions needed
+## 12. Decisions taken
 
-- [ ] D-A. Accept the answer to Decision 6: the buyer's PoCC verifier key is the meter key for the rent case, with the referee key and the X-1 path as the route away from it.
-- [ ] D-B. `min_uptime_bp` and `min_assurance` live in the delivery section (no evaluator change) rather than as rule atoms. Rule atoms can follow after framework step 5.
-- [ ] D-C. `meter_spec` is an opaque hash in Warrant's typed policy; Warrant's structs never learn PoCC's parameters.
-- [ ] D-D. The usage record is Warrant-native (bincode, secp256k1) and `pocc-verify` delegates signing to `warrant-evidence sign-usage`.
-- [ ] D-E. One piece = one clock hour; the batch default is 24 hours; the period start is aligned to the hour.
-- [ ] D-F. The dispute entity of section 8, with an optional `referee_key` in the policy, and `ESCALATE` mapping to Warrant's `Ask`.
-- [ ] D-G. `PoccAnchor` is deployed beside the escrow on Arc and the notary wallet pays its gas in USDC. Who funds it: provider, or shared.
-- [ ] D-H. `pocc` becomes a submodule of `warrant`.
+Reviewed by the owner on 2026-10-29. The full entries, with alternatives and reversal
+cost, are in `docs/decisions.md` (entries 15–25).
 
-After the decisions, phase A produces the two spec pull requests (PE-1 in
-policy-execution, W-1 in warrant), each written in Simplified Technical English as
-those repositories require.
+- [x] D-A. The buyer's PoCC verifier key is the meter key for the rent case (decision 15).
+- [x] D-B. `min_uptime_bp` and `min_assurance` live in the delivery section, not as rule atoms (16). If atoms are needed later: two atoms, two `Facts` fields, two Verus cases, a new rent image; PoCC does not change.
+- [x] D-C. `meter_spec` is an opaque hash in Warrant's typed policy (17).
+- [x] D-D. The usage record is Warrant-native; `pocc-verify` delegates signing to `warrant-evidence sign-usage` (18).
+- [x] D-E. One piece = one clock hour; batch default 24; period aligned to the hour (19).
+- [x] D-F. The dispute mechanic is future work; v1 ends disagreements with Warrant's `Ask` (20).
+- [x] D-G. `PoccAnchor` on Arc; the provider pays anchoring as a cost of selling (21).
+- [x] D-H. `pocc` becomes a submodule of `warrant` (22).
+- [x] One order: the escrow order replaces the PoCC Order (23).
+- [x] PoCC core stays consumer-agnostic; Warrant code in `pkg/adapter/warrant` (24).
+- [x] One guardrail key for the registry, acceptance and meter roles in v1 (25).
+
+Phase A now produces the two spec pull requests (PE-1 in policy-execution, W-1 in
+warrant), each written in Simplified Technical English as those repositories require.
