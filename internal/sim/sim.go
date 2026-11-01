@@ -108,7 +108,8 @@ func WarrantPolicy(q pocc.Request, meterKey string, price int64, meterSpecHex st
 		Validity: warrant.Validity{After: ps.Unix(), Until: pe.Add(7 * 24 * time.Hour).Unix()},
 		LeaseID:  pocc.Hex(pocc.LeaseID(q)), Ceiling: 24 * 3600 * price, MaxNote: 3600 * price, BatchSize: 24,
 		Delivery: warrant.Delivery{Kind: warrant.KindSignedUsage, MeterKey: meterKey, Unit: warrant.UnitInstanceSecond,
-			PricePerUnit: price, MinUptimeBP: 9500, MeterSpec: meterSpecHex},
+			PricePerUnit: price, MinUptimeBP: 9500, MeterSpec: meterSpecHex,
+			ServiceStart: ps.Unix(), ServiceEnd: pe.Unix(), PieceS: 3600, ChallengeTimeoutS: 300},
 		Rule: json.RawMessage(`{"all":["accepted"]}`)} // the cap, D5 and the ceiling bound the amount (lease evidence 5a.6)
 	b, _ := json.Marshal(p)
 	return b

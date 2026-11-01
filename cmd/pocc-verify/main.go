@@ -100,13 +100,16 @@ func main() {
 		pol, err := warrant.Parse(R.Request.Policy)
 		if err == nil {
 			for _, r := range wr {
-				uptime := r.Units * 10000 / r.Creditable
-				verdict := "would pass D6-D8: a note up to units x price"
-				if uptime < uint64(pol.Delivery.MinUptimeBP) || r.Assurance < pol.Delivery.MinAssurance {
-					verdict = "below the policy's floors: the note must be 0 (D6, D7)"
+				full := r.Units * uint64(pol.Delivery.PricePerUnit)
+				verdict := fmt.Sprintf("a note up to %d passes D4-D9", full)
+				if err := warrant.Decide(pol.Delivery, r, full); err != nil {
+					verdict = "the note must be 0: " + err.Error()
+					if err0 := warrant.Decide(pol.Delivery, r, 0); err0 != nil {
+						verdict = "no note can settle: " + err0.Error()
+					}
 				}
-				fmt.Fprintf(os.Stderr, "  hour %d: %d s, uptime %d bp, assurance %d -> %s\n",
-					r.FirstIndex, r.Units, uptime, r.Assurance, verdict)
+				fmt.Fprintf(os.Stderr, "  hour %d: %d of %d s, assurance %d -> %s\n",
+					r.FirstIndex, r.Units, r.Creditable, r.Assurance, verdict)
 			}
 		}
 		if *signCmd != "" {

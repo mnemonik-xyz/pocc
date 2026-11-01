@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mnemonik-xyz/pocc/pkg/pocc"
 	"github.com/mnemonik-xyz/pocc/pkg/verify"
@@ -64,6 +65,12 @@ type Delivery struct {
 	MinUptimeBP  uint16 `json:"min_uptime_bp"`
 	MinAssurance uint8  `json:"min_assurance"`
 	MeterSpec    string `json:"meter_spec"`
+	// The service period and piece length: the origin of the piece index
+	// (lease evidence 5a.1). PoCC checks they equal its request's period.
+	ServiceStart      int64 `json:"service_start"`
+	ServiceEnd        int64 `json:"service_end"`
+	PieceS            int64 `json:"piece_s"`
+	ChallengeTimeoutS int64 `json:"challenge_timeout_s"`
 }
 
 // Delivery kinds and units.
@@ -105,6 +112,14 @@ func Check(q pocc.Request) (int64, error) {
 		return 0, errors.New("max_note below the price of a full hour (lease evidence 5a.6)")
 	case p.Ceiling < p.MaxNote || p.BatchSize == 0:
 		return 0, errors.New("ceiling below max_note, or batch_size zero")
+	case d.PieceS != 3600:
+		return 0, fmt.Errorf("piece_s %d: PoCC meters clock hours", d.PieceS)
+	case d.ServiceStart != periodUnix(q.Period.Start) || d.ServiceEnd != periodUnix(q.Period.End):
+		return 0, errors.New("service_start or service_end differs from the request's period")
+	case p.Validity.After > d.ServiceStart || p.Validity.Until < d.ServiceEnd+d.ChallengeTimeoutS:
+		return 0, errors.New("validity does not cover the service period and the challenge timeout")
+	case d.ChallengeTimeoutS <= 0:
+		return 0, errors.New("challenge_timeout_s missing")
 	case q.MeterSpec.Anchor.Kind == "evm" && (q.MeterSpec.Anchor.ChainID != p.Scope.ChainID):
 		return 0, errors.New("anchor chain differs from the policy scope chain")
 	}
@@ -271,3 +286,13 @@ func SignExternal(dir, cmd, keyPath string, recs []UsageRecord) ([]Signed, error
 
 // HexHash formats a hash for the policy's meter_spec field.
 func HexHash(b []byte) string { return hex.EncodeToString(b) }
+
+// periodUnix parses an RFC 3339 period bound; a bad value gives -1 so that no
+// policy field can equal it.
+func periodUnix(s string) int64 {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return -1
+	}
+	return t.Unix()
+}

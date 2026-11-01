@@ -156,7 +156,8 @@ func request(args []string) {
 				Validity: warrant.Validity{After: ps.Unix(), Until: pe.Add(7 * 24 * time.Hour).Unix()},
 				LeaseID:  pocc.Hex(pocc.LeaseID(q)), Ceiling: *ceiling, MaxNote: *maxNote, BatchSize: 24,
 				Delivery: warrant.Delivery{Kind: warrant.KindSignedUsage, MeterKey: *meter, Unit: warrant.UnitInstanceSecond,
-					PricePerUnit: *price, MinUptimeBP: uint16(*minUptime), MeterSpec: pocc.Hex(ms)},
+					PricePerUnit: *price, MinUptimeBP: uint16(*minUptime), MeterSpec: pocc.Hex(ms),
+					ServiceStart: ps.Unix(), ServiceEnd: pe.Unix(), PieceS: 3600, ChallengeTimeoutS: 300},
 				Rule: json.RawMessage(*rule)}
 			q.Policy, _ = json.MarshalIndent(p, "", "  ")
 		}

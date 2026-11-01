@@ -114,10 +114,12 @@ co-signing (both online every hour, no gain over the buyer alone), or the zkVM g
 (`computed_result`, the end state X-1). A malicious buyer can only under-credit: sign
 records for fewer seconds than the receipt proves, or sign nothing. It cannot
 over-credit without paying itself, cannot move funds, and cannot forge the provider's
-evidence. The provider's exposure is one hour, because it challenges for hour k after
-hour k ran, serves hour k+1 against note k, and stops when note k is missing by the end
-of hour k+1 (lease evidence SS-9); and anyone can re-run `pocc verify` on the public
-evidence and show the under-credit.
+evidence. The provider's exposure is `E` of lease evidence 5a.5: one hour at the cap,
+plus the challenge timeout and its shutdown latency at the hourly price, plus
+provisioning. It challenges for hour k after hour k ran, waits at most
+`challenge_timeout_s` for note k while hour k+1 runs, and stops if the note does not
+arrive; and anyone can re-run `pocc verify` on the public evidence and show the
+under-credit.
 
 ## 4. The rent policy
 
@@ -244,9 +246,15 @@ from the policy and the chain and refuses any other. There is no other mode (dec
 Warrant's `signed_acceptance` kind instead. The receipt carries no bill and no provider
 signature; the bill is the provider's notes, checked against the usage records (D5).
 
-**Hour index.** Hour k covers `[period.start + k*3600, period.start + (k+1)*3600)`. The
-period start is aligned to a clock hour by the broker (the verifier reports `E_PERIOD`
-otherwise), so that PoCC's per-hour credit and Warrant's notes count the same hours. A
+**Hour index.** The origin of the index is the policy's `delivery.service_start`
+(lease evidence 5a.1), and hour k covers `[service_start + k*3600, service_start +
+(k+1)*3600)`. PoCC's Request names the same period: the adapter refuses a policy whose
+`service_start`, `service_end` or `piece_s` differ from the Request's period, and the
+broker aligns the period start to a clock hour (the verifier reports `E_PERIOD`
+otherwise), so that PoCC's per-hour credit and Warrant's notes count the same hours.
+`validity.after` may precede `service_start` (authorization before provisioning) and
+`validity.until` must exceed `service_end` by the challenge timeout and the settlement
+grace. A
 credited interval belongs to the hour in which it ends, with an interval ending exactly
 on the hour counted in the hour before. drand slots fall at :24 past each minute, so the
 first hour of a period can earn at most 3,540 s. The record therefore carries
@@ -291,14 +299,18 @@ policy cannot exist without a delivery proof.
 | 11 | Worker calls `settle(seal, journal)` | `scope`, `ceiling` | Payment to the recipient | Escrow: image ID, `schemaId`, both hashes, obligation consumed once |
 | 12 | After `settleBy`, anyone closes; the remainder returns | `validity` | — | Escrow |
 
-### 6.3 Why the path cannot be shortened
+### 6.3 What the path binds, and where it is trusted
 
 Step 11 pays only for a journal that commits `deliverySpecHash` equal to the order's;
 the journal exists only if step 10 found records under `meter_key` for every hour in
-the batch; the verifier signs a record only for a receipt whose evidence matches
-`meter_spec`; and that evidence exists only if the VM ran the agent bound to `h0`. The
-chain of "only if" runs from the escrow back to the tenant's signed policy with no step
-that a single party can supply alone.
+the batch; and the escrow pays the fixed recipient inside the ceiling and nothing else.
+That much is enforced. The link from a record to the evidence is not: the guest does
+not check that the verifier ran, so the holder of `meter_key` (in v1 the buyer's one
+guardrail key, decision 25) can sign records and notes that agree with each other for
+hours that did not happen. v1 trusts that key (decision 35, section 7). The chain of
+"only if" is therefore: escrow → journal → records under the trusted key → (trusted)
+verifier → evidence bound to `h0` → the tenant's signed policy. X-1 replaces the
+trusted step with a proof.
 
 ## 7. The usage record and the delivery check in the guest
 
@@ -307,20 +319,24 @@ Warrant-typed struct, bincode-encoded, signed by the meter key over
 `tagged_bytes(warrant/usage/v1, record)`, so it can never be mistaken for a note.
 
 ```rust
-// core/src/meter.rs
+// core/src/meter.rs (normative copy: lease evidence 5a.2)
 pub struct UsageRecord {
     pub scope: Scope,            // chain, escrow, token: equal to the policy's
     pub lease_id: Hash,
     pub first_index: u32,        // hour index k
-    pub last_index: u32,         // = k for PoCC; a range is allowed by the type
-    pub window_start: u64,       // unix seconds, the clock hour
-    pub window_end: u64,
+    pub last_index: u32,         // = k in v1; a range record is refused (D1)
+    pub window_start: u64,       // unix seconds: service_start + k * 3600
+    pub window_end: u64,         // window_start + 3600
     pub units: u64,              // credited seconds in the window
+    pub creditable: u64,         // the most seconds the window can earn under the slot schedule
     pub assurance: u8,           // 0 = L0, 1 = L1
     pub meter_spec: Hash,        // the meter_spec the verifier checked against
     pub deliverable_hash: Hash,  // PoCC receipt_hash: the evidence the record was computed from
 }
 ```
+
+The note for hour k carries `hash(record_k)` as its `deliverable_hash`, so a note binds
+to one record.
 
 `pocc-verify` writes this struct as JSON; `warrant-evidence sign-usage <meter.key>
 usage.json sig.json` signs it, mirroring `sign-acceptance`. PoCC never implements
@@ -331,18 +347,25 @@ gate, as acceptance ME-1 requires):
 
 | # | Gate | Outcome if it fails |
 |---|---|---|
-| D1 | A record exists for every note index in the batch, with no gap and no overlap | `Ask` (missing), `Deny` (overlap) |
+| D1 | One record for every note index in the batch, `first_index = last_index = k`, no gap, no overlap | `Ask` (missing), `Deny` (overlap or range) |
 | D2 | Each record's signature verifies under `delivery.meter_key` | `Deny` |
 | D3 | Each record's `scope` and `lease_id` equal the policy's; `meter_spec` equals `delivery.meter_spec` | `Deny` |
-| D4 | Each record's window lies inside the policy's validity, and `window_end - window_start` is one hour | `Deny` |
-| D5 | For each note k: `amount_k ≤ units_k × price_per_unit + tolerance` | `Deny` |
-| D6 | If `units_k × 10000 / (window_end - window_start) < min_uptime_bp`, then `amount_k = 0` | `Deny` |
-| D7 | If `assurance < min_assurance`, then `amount_k = 0` | `Deny` |
+| D4 | Each record's window is `[service_start + k × piece_s, service_start + (k+1) × piece_s)` and lies inside the policy's validity | `Deny` |
+| D5 | For each note k: `amount_k ≤ units_k × price_per_unit + tolerance`, and `note.deliverable_hash = hash(record_k)` | `Deny` |
+| D6 | If `units_k × 10000 < min_uptime_bp × creditable_k`, then `amount_k = 0` | `Deny` |
+| D7 | If `assurance_k < min_assurance`, then `amount_k = 0` | `Deny` |
+| D8 | `0 < creditable_k ≤ window_end − window_start`, `units_k ≤ creditable_k`, `assurance_k ∈ {0, 1}` | `Deny` |
+| D9 | Every product and sum is checked; an overflow fails, never wraps | `Deny` |
+
+The table is a copy of lease evidence 5a.3, which is normative. `pkg/adapter/warrant`
+`Decide` is the Go reference for D4 to D9 and `test/vectors/usage-gates.json` holds the
+cases both implementations must decide alike (DL-12).
 
 An hour below the floors is not skipped (decision 31). The guardrail signs its usage
 record and a note for amount 0, so note indices stay consecutive and the batch settles
 with that hour unpaid. A guardrail that signs nothing is non-cooperation: the provider
-stops after one more hour and settles the notes that exist as a partial batch.
+stops `challenge_timeout_s` after the hour ended and settles the notes it holds; the
+batch closes once and a note that arrives later is refused (lease evidence 5a.5, SS-11).
 
 Then the rule tree runs on the existing facts. The journal is the invoice layout plus
 the two delivery words: `deliverySpecHash` and

@@ -59,6 +59,10 @@ handoff (`docs/handoff/`).
 | 33 | 2026-11-02 | First commercial arrangement is a reseller: the seller rents the machine from a cloud under its own account; it holds the cloud credentials, pays the cloud regardless, absorbs rejected hours, terminates and pays storage after compute stops | Taken, not yet reviewed by the owner | Architecture §1, lease evidence §5a | A direct cloud is the same protocol with two roles in one party; no format change |
 | 34 | 2026-11-02 | Usage records carry `creditable`: the most seconds the hour can earn under the slot schedule; floors are a share of it (a perfect boundary hour meets 100 %) | Taken | Verifier, adapter, lease evidence D6, D8 | Drop the field and cap `min_uptime_bp` below 9834 instead |
 | 35 | 2026-11-02 | v1 trusts the guardrail's attestation of delivery; the guest checks the signature and the gates, not the metering; all claims that no party alone can authorize payment are withdrawn. Decision 25 (one key) stands with that trust stated; splitting the keys is its reversal | Taken, not yet reviewed by the owner | Lease evidence §5a.4, §8; integration §6 | Split the meter key from the acceptance key (no format change) |
+| 36 | 2026-11-02 | Continuation gate: hour k+1 is served against note k; the provider waits at most `challenge_timeout_s` (policy field) after hour k; exposure `E` = one hour + grace + shutdown + provisioning, stated everywhere | Taken | Lease evidence 5a.5, SS-9, SS-10; integration §1 | Serve blindly through hour k+1 (two hours of exposure) |
+| 37 | 2026-11-02 | The index origin is `delivery.service_start`; the delivery section carries `service_start`, `service_end`, `piece_s`, `challenge_timeout_s`; the adapter refuses a policy whose period differs from the Request's | Taken | Lease evidence 5a.1, 5a.2; `pkg/adapter/warrant` | Derive the origin from `validity.after` (breaks when authorization precedes provisioning) |
+| 38 | 2026-11-02 | Batches close once; a late note is refused; the guardrail sets note windows so none expires inside an unfinished batch (BG-6); the seller keeps a settled/held/open reservation ledger (SS-10) | Taken | Lease evidence 5a.5, SS-10, SS-11, BG-6 | Per-hour obligations on chain (contract change) |
+| 39 | 2026-11-02 | Gates D4 to D9 have a Go reference (`warrant.Decide`) and shared decision vectors (`test/vectors/usage-gates.json`) that Warrant's `authorize_meter` must match | Taken | `pkg/adapter/warrant`, DL-12 | None |
 
 ## Decisions in full
 
@@ -236,3 +240,14 @@ a journal by fiat (the owner's framework track decides, so no); for 33, a cloud 
 accepts Warrant directly (none does today); for 34, a cap on `min_uptime_bp` (hides
 the accounting instead of stating it); for 35, split the keys now (no format change
 either way; left to the owner). *Reversal:* per row.
+
+**36 to 39 Second audit round, 2 Nov.** *Found by:* the auditor's review of #76 at
+`8290bc0` and pocc `f330c0f`: the state machine let two hours run without a note
+while claiming one; SS-10 ignored delivered hours whose note had not arrived; a
+settled prefix consumed the batch and late notes had nowhere to go; the pocc copy of
+the record and gates lagged #76; the two documents used different index origins;
+`creditable` lacked both endpoint constraints; §6.3 and §4b still claimed no single
+party could supply the path. *Outcome:* the gate, the ledger, batch closing with
+BG-6, `service_start` as the one origin, the formula for `creditable` with its
+commercial meaning, the claims replaced, and the Go reference with shared vectors so
+the two implementations cannot drift again. *Reversal:* per row.
