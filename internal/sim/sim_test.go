@@ -79,6 +79,18 @@ func TestT1HappyPath(t *testing.T) {
 	if len(recs) != 9 || recs[0].Units != 3540 || recs[8].Units != 60 {
 		t.Fatalf("hourly records: %+v", recs)
 	}
+	// DL-10: a perfect boundary hour meets a 100 % floor, because the floor is a
+	// share of what the slot schedule lets the hour earn, not of 3,600 s.
+	for i, r := range recs[:8] {
+		if r.Units != r.Creditable || r.UptimeBP != 10000 {
+			t.Fatalf("record %d: %d of %d creditable, %d bp", i, r.Units, r.Creditable, r.UptimeBP)
+		}
+	}
+	// The agent stopped one slot into the ninth hour of a period that runs to
+	// its end: 60 s earned of 3,600 s creditable, which is below any floor.
+	if recs[0].Creditable != 3540 || recs[1].Creditable != 3600 || recs[8].Creditable != 3600 || recs[8].UptimeBP != 166 {
+		t.Fatalf("creditable: %d %d %d, last %d bp", recs[0].Creditable, recs[1].Creditable, recs[8].Creditable, recs[8].UptimeBP)
+	}
 }
 
 // The Warrant policy in the request, h0 from the escrow order, and
@@ -260,6 +272,12 @@ func TestT9Outage(t *testing.T) {
 		t.Fatalf("credited %d gaps %d, want %d 1", v.CreditedS, v.Gaps, want)
 	}
 	assertNoteDenied(t, R, v, 100*60/3600, 3600*RateMicros)
+	recs, _ := verify.UsageRecords(R, v, nil)
+	for _, r := range recs {
+		if r.Hour == 100*60/3600 && (r.Creditable != 3600 || r.UptimeBP >= 9500) {
+			t.Fatalf("outage hour: %d of %d, %d bp", r.Units, r.Creditable, r.UptimeBP)
+		}
+	}
 }
 
 // Stage 0 boot evidence: the Nova record must match the request.

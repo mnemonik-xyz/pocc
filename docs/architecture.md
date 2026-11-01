@@ -3,17 +3,34 @@
 Status: proof of concept, Stage 0. Spec: *PoCC Proof of Concept — Spec v0.2*
 (Claude doc "Proof of Cloud Compute (PoCC) — PoC spec").
 
-PoCC proves that ordered cloud compute was delivered for the time it is billed,
-without trusting the provider's meter. The proof starts in the tenant's signed
-request, which carries the Warrant policy, and ends when Warrant's escrow pays for
-proven hours only.
+PoCC proves sampled liveness of a rented machine, without trusting the provider's
+meter: an agent key born inside the machine signed a heartbeat on every 60 s beacon
+slot, and each heartbeat was anchored in time. It credits the 60 s between two
+consecutive anchored heartbeats and nothing else. The proof starts in the tenant's
+signed request, which carries the Warrant policy, and ends when Warrant's escrow pays
+for credited hours only.
+
+What this does and does not establish (audit of 2 Nov, finding 1):
+
+| Property of "delivered compute" | Stage 0 | Stage 1 (SEV-SNP) | Later |
+|---|---|---|---|
+| Instance availability, sampled every 60 s | Yes, if the provider does not extract the agent key and run the signer elsewhere | Yes: the key is born inside an attested machine | — |
+| Hardware identity and launched image | No (Nova's own record only) | Yes: launch measurement, VCEK chain | — |
+| Resource allocation (vCPUs, memory, GPU) | No | Partly: the attested image reads the hardware it sees | Stage 1 counters and GPU evidence (spec §11) |
+| Performance | No | No | Throughput checks, `tau_max` (deferred, decision 10) |
+| Job correctness | No | No | Job commitments, sampling, re-execution (decision 02) |
+
+Two timely heartbeats are two observations. Availability between them is the Stage 0
+assumption, bounded by the slot length; duty cycling inside a slot is not caught
+(decision 06).
 
 ## 1. Roles
 
 | Role | Runs where | Holds | Trusted for | Not trusted for |
 |---|---|---|---|---|
 | Tenant | Buyer's machine | Ed25519 signing key, X25519 seal key | Its own request and policy | — |
-| Provider | OpenStack cloud (amnezia.cloud) | Escrow recipient key | Accepting the escrow order | Meter readings, uptime, billing |
+| Provider (seller) | A reseller renting the machine from an OpenStack cloud under its own account (first arrangement, decision 33); or the cloud itself | Escrow recipient key, cloud credentials | Accepting the escrow order; paying the cloud's own invoice | Meter readings, uptime, billing |
+| Cloud (amnezia.cloud) | OpenStack | — | Nothing of Warrant | Running the machine; it bills the seller on its own terms |
 | Agent (`pocc-agent`) | Inside the tenant's VM | Agent key and disclosure seed, created at boot | Producing heartbeats (Stage 0: assumes the provider does not read VM memory) | — |
 | Notary (`pocc-notary`) | Any host with a public IP | Anchor wallet or anchor key | Nothing; everything it serves is checkable | Time, order, content |
 | Beacon (drand quicknet) | Public network | — | Unpredictable values on a fixed 3 s schedule | — |

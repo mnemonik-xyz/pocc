@@ -255,6 +255,29 @@ func checkProof(ctx context.Context, env Env, p pocc.BatchProof, leaf []byte) (i
 	return env.Anchors.Check(ctx, p.Anchor, root)
 }
 
+// Creditable returns, per hour (RFC 3339 key as in Verdict.PerHourS), the most
+// seconds the hour can earn: 60 s for every slot interval that ends inside the
+// hour and lies inside the period. It depends on the slot schedule and the
+// period only, never on the evidence, so boundary hours of a period earn less
+// than 3,600 s (the beacon's slots do not fall on the hour) and a perfect
+// boundary hour still meets a 100 % uptime floor.
+func Creditable(info pocc.BeaconInfo, slot uint64, start, end time.Time) map[string]int64 {
+	out := map[string]int64{}
+	r := beacon.RoundAt(info, start)
+	if r%slot != 0 || beacon.Time(info, r).Before(start) {
+		r = beacon.NextSlot(r, slot)
+	}
+	for {
+		next := r + slot
+		tEnd := beacon.Time(info, next)
+		if tEnd.After(end) {
+			return out
+		}
+		out[tEnd.Add(-time.Second).Truncate(time.Hour).Format(time.RFC3339)] += int64(slot) * info.PeriodS
+		r = next
+	}
+}
+
 // UsageRecords turns a verdict into one PoCC-native usage record per billing
 // hour. sign may be nil (unsigned records for an adapter to translate). An
 // INVALID verdict yields none. Hour indices count from the period start.
@@ -266,6 +289,16 @@ func UsageRecords(R *pocc.Receipt, v pocc.Verdict, sign func(any) (string, error
 	if err != nil {
 		return nil, err
 	}
+	end, err := time.Parse(time.RFC3339, R.Request.Period.End)
+	if err != nil {
+		return nil, err
+	}
+	m := R.Request.MeterSpec
+	info, ok := beacon.Known[m.BeaconChainHash]
+	if !ok {
+		return nil, fmt.Errorf("unknown beacon chain %s", m.BeaconChainHash)
+	}
+	creditable := Creditable(info, uint64(m.SlotRounds), start, end)
 	msh, err := pocc.MeterSpecHash(R.Request.MeterSpec)
 	if err != nil {
 		return nil, err
@@ -283,9 +316,13 @@ func UsageRecords(R *pocc.Receipt, v pocc.Verdict, sign func(any) (string, error
 			return nil, err
 		}
 		s := v.PerHourS[h]
+		cr := creditable[h]
+		if cr <= 0 || s > cr {
+			return nil, fmt.Errorf("hour %s: credited %d s, creditable %d s", h, s, cr)
+		}
 		rec := pocc.UsageRecord{Version: pocc.Version, Lease: pocc.Hex(pocc.LeaseID(R.Request)),
 			Hour: int64(t.Sub(start) / time.Hour), WindowStart: t.Unix(), WindowEnd: t.Add(time.Hour).Unix(),
-			Unit: "instance-second", Units: s, Assurance: v.Assurance, UptimeBP: s * 10000 / 3600,
+			Unit: "instance-second", Units: s, Creditable: cr, Assurance: v.Assurance, UptimeBP: s * 10000 / cr,
 			MeterSpec: meterSpec, ReceiptHash: v.ReceiptHash}
 		if sign != nil {
 			if rec.Sig, err = sign(rec); err != nil {

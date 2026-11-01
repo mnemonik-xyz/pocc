@@ -55,6 +55,10 @@ handoff (`docs/handoff/`).
 | 29 | 2026-10-29 | In escrow mode the receipt's billed fields and signature are optional; billing is through the consumer's notes | Taken, not yet reviewed by the owner | Verifier | Make them mandatory again |
 | 30 | 2026-11-02 | One mode, escrow only: the proof of delivery is whatever the executed policy says; PoCC is one delivery kind (`signed_usage`); `meter_spec` mandatory in the Request; the PoCC `Order` type and the offline path removed. Amends the last clause of 23 | Taken | Verifier, agent, broker, sim, `docs/architecture.md` | Reinstate the `Order` type and the offline branch; old fixtures verify again |
 | 31 | 2026-11-02 | Challenge after the hour (SS-9); an hour below the floors gets a usage record and a zero note, so batches stay contiguous (D6, D7 bound the amount instead of denying) | Taken | Lease evidence §5a, §6; integration §6 | Allow gaps in batches: `authorize_meter` and the proved evaluator change |
+| 32 | 2026-11-02 | One versioned interface document (PE-0) precedes PE-2, PE-3 and PE-6; the three journal and escrow variants in the docs are not approved for implementation on their own | Taken, with the owner | Lease evidence §5, integration §10 | Pick one variant by fiat and start |
+| 33 | 2026-11-02 | First commercial arrangement is a reseller: the seller rents the machine from a cloud under its own account; it holds the cloud credentials, pays the cloud regardless, absorbs rejected hours, terminates and pays storage after compute stops | Taken, not yet reviewed by the owner | Architecture §1, lease evidence §5a | A direct cloud is the same protocol with two roles in one party; no format change |
+| 34 | 2026-11-02 | Usage records carry `creditable`: the most seconds the hour can earn under the slot schedule; floors are a share of it (a perfect boundary hour meets 100 %) | Taken | Verifier, adapter, lease evidence D6, D8 | Drop the field and cap `min_uptime_bp` below 9834 instead |
+| 35 | 2026-11-02 | v1 trusts the guardrail's attestation of delivery; the guest checks the signature and the gates, not the metering; all claims that no party alone can authorize payment are withdrawn. Decision 25 (one key) stands with that trust stated; splitting the keys is its reversal | Taken, not yet reviewed by the owner | Lease evidence §5a.4, §8; integration §6 | Split the meter key from the acceptance key (no format change) |
 
 ## Decisions in full
 
@@ -215,3 +219,20 @@ serve piece k+1 against note k, stop when note k is missing); D6 and D7 require
 `amount_k = 0` below the floors instead of denying, and the guardrail signs the zero
 note. A zero-amount accepted note is already a legal note, so nothing proved changes.
 *Reversal:* either alternative.
+
+**32 to 35 Answers to the audit of 2 Nov.** *Found by:* an independent documentation
+audit of pocc `8ea3f27`, policy-execution #76 at `a8978b8` and warrant #16 at
+`332e300`, ten findings. 31 had already answered finding 3 (zero notes) and part of 4
+(SS-9); the state machine of lease evidence 5a.5 answers the rest of 4; the example
+policy and the simulator's policy numbers were wrong (finding 5: 24 × 3.96 USDC
+exceeds a 50 USDC ceiling, and a 4 USDC rule on the batch total denies every batch
+over one hour) and now follow lease evidence 5a.6 with SS-10 for outstanding notes;
+findings 7 (record arithmetic: one record per index, exact windows, bounds, checked
+arithmetic, note bound to the record) and 9 (evidence custody BG-5; roots cannot
+rebuild withheld entries; X-1 witness design) are in the lease evidence and here; 1
+(sampled liveness, the five-property table) is in the architecture and the lease
+evidence; 10 (boundary hours) is decision 34. *Alternatives considered:* for 32, pick
+a journal by fiat (the owner's framework track decides, so no); for 33, a cloud that
+accepts Warrant directly (none does today); for 34, a cap on `min_uptime_bp` (hides
+the accounting instead of stating it); for 35, split the keys now (no format change
+either way; left to the owner). *Reversal:* per row.

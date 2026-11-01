@@ -101,6 +101,10 @@ func Check(q pocc.Request) (int64, error) {
 		return 0, errors.New("price_per_unit is zero or above the request's maximum rate")
 	case d.MinUptimeBP > 10000:
 		return 0, errors.New("min_uptime_bp above 10000")
+	case p.MaxNote < 3600*d.PricePerUnit:
+		return 0, errors.New("max_note below the price of a full hour (lease evidence 5a.6)")
+	case p.Ceiling < p.MaxNote || p.BatchSize == 0:
+		return 0, errors.New("ceiling below max_note, or batch_size zero")
 	case q.MeterSpec.Anchor.Kind == "evm" && (q.MeterSpec.Anchor.ChainID != p.Scope.ChainID):
 		return 0, errors.New("anchor chain differs from the policy scope chain")
 	}
@@ -157,6 +161,7 @@ type UsageRecord struct {
 	WindowStart     uint64      `json:"window_start"`
 	WindowEnd       uint64      `json:"window_end"`
 	Units           uint64      `json:"units"`
+	Creditable      uint64      `json:"creditable"` // the most units the window can earn (lease evidence 5a.2)
 	Assurance       uint8       `json:"assurance"`
 	MeterSpec       Bytes32     `json:"meter_spec"`
 	DeliverableHash Bytes32     `json:"deliverable_hash"`
@@ -201,7 +206,7 @@ func Records(q pocc.Request, recs []pocc.UsageRecord) ([]UsageRecord, error) {
 		}
 		w.FirstIndex, w.LastIndex = uint32(r.Hour), uint32(r.Hour)
 		w.WindowStart, w.WindowEnd = uint64(r.WindowStart), uint64(r.WindowEnd)
-		w.Units = uint64(r.Units)
+		w.Units, w.Creditable = uint64(r.Units), uint64(r.Creditable)
 		if r.Assurance == "L1" {
 			w.Assurance = 1
 		}

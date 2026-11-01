@@ -175,8 +175,8 @@ inside the Request together with `policy_hash` from `warrant-policy hash`):
   "registry_key": "<secp256k1>",
   "acceptance_key": "<secp256k1, signs notes>",
   "lease_id": "<H(PoCC/poc/lease, request_hash)>",
-  "ceiling": 50000000,
-  "max_note": 4000000,
+  "ceiling": 95040000,
+  "max_note": 3960000,
   "batch_size": 24,
   "delivery": {
     "kind": "signed_usage",
@@ -188,12 +188,18 @@ inside the Request together with `policy_hash` from `warrant-policy hash`):
     "min_assurance": 0,
     "meter_spec": "<hash of the pocc object>"
   },
-  "rule": {"all": ["accepted", {"amount_at_most": 4000000}, {"vendor_category_in": [12]}]}
+  "rule": {"all": ["accepted", {"vendor_category_in": [12]}]}
 }
 ```
 
-Amounts are USDC base units (six decimals): 1100 per second is 3.96 USDC per hour, and
-`max_note` caps one hour at 4 USDC.
+Amounts are USDC base units (six decimals): 1100 per second is 3.96 USDC per hour.
+Three limits bound the money and they are not the same (lease evidence 5a.6):
+`max_note` caps one hour (3.96 USDC, the price of a full hour; a lower cap makes a
+full hour unbillable); the rule tree sees the batch total, so an `amount_at_most` there
+must be at least `batch_size × max_note` (95.04 USDC) or be absent, as here, since D5
+and the cap already bound each hour; the ceiling bounds the lease, 24 hours at full
+price here. A signed note is a claim, not a reservation: the seller keeps settled plus
+outstanding notes plus the next hour inside the ceiling (SS-10) before it serves.
 
 **What each side checks.** Warrant's validator rejects a rent policy without a
 `delivery` section of kind `signed_usage`, with a zero `meter_spec`, or with
@@ -243,9 +249,13 @@ period start is aligned to a clock hour by the broker (the verifier reports `E_P
 otherwise), so that PoCC's per-hour credit and Warrant's notes count the same hours. A
 credited interval belongs to the hour in which it ends, with an interval ending exactly
 on the hour counted in the hour before. drand slots fall at :24 past each minute, so the
-first hour of a period credits at most 3,540 s and a final heartbeat just past the last
-hour adds one 60 s interval to hour k+1; the policy's `min_uptime_bp` decides what those
-edge hours are worth.
+first hour of a period can earn at most 3,540 s. The record therefore carries
+`creditable`: the most seconds the hour can earn under the slot schedule, computed from
+the schedule and the period alone (`verify.Creditable`). The uptime floor is a share of
+`creditable`, not of 3,600, so a perfect boundary hour meets a 100 % floor (DL-10).
+Three figures are kept apart: observed runtime (what the machine did; not evidence),
+credited runtime (`units`, what two anchored heartbeats prove), and billable runtime
+(`units` after the policy's floors, what the note may charge).
 
 ## 6. The proof path, as the policy states it
 
@@ -339,12 +349,19 @@ the two delivery words: `deliverySpecHash` and
 `deliveryHash = hash_tagged(warrant/usage-batch/v1, records in index order)`.
 
 **What the guest proves and does not prove.** It proves that the key the owner named
-signed records for every hour billed, that those records were computed against the
-pinned meter parameters, and that no hour was billed above its credited seconds. It
-does not prove that the verifier ran correctly: that is the meter-key trust assumption,
-bounded by the fact that anyone can re-run the verifier on the receipt named in
-`deliverable_hash` (section 8). Moving the verifier into the guest removes the
-assumption; it is the last work package.
+signed one record per hour billed, that each record names the pinned `meter_spec`, and
+that no note exceeds its record's credited seconds times the price. It does not run
+PoCC, read the receipt, or check that the records follow from the evidence; a record
+that names the right `meter_spec` hash proves nothing about whether its signer followed
+those parameters. v1 trusts the guardrail's attestation of delivery. The bounds of that
+trust: a buyer that under-credits loses its own service after one hour and can be shown
+wrong by anyone who re-runs the verifier; a buyer that over-credits pays the provider
+from its own funds; whoever holds the buyer's guardrail key (one key for the meter,
+acceptance and registry roles, decision 25) can sign records and notes that agree with
+each other and pay the fixed recipient, up to the ceiling, for hours that did not
+happen. No key moves funds elsewhere. Moving the verifier into the guest over
+authenticated evidence (X-1) replaces the attestation with a proof; it is the last work
+package, and its row in section 10 lists what it must authenticate.
 
 ## 8. Dispute
 
@@ -366,7 +383,7 @@ beside the escrow, never inside it, and ends in one of the escrow's existing mov
 | Verifier credited fewer seconds than the provider believes it delivered (gap, late anchors) | Provider | Yes | The receipt and the anchors decide; a referee re-runs the verifier |
 | Verifier credited seconds the tenant believes were not delivered | Tenant | Yes | Same evidence; the tenant may also open usage fields |
 | Guardrail does not answer the hourly challenge (no note, no record) | Provider | Yes, as non-cooperation | The provider stops service; the escrow returns the remainder after `settleBy`; the record of it feeds reputation |
-| Provider's receipt omits anchored entries | Tenant | Yes | The notary's log and Arc hold the entries; a referee rebuilds the receipt |
+| Provider's receipt omits anchored entries | Tenant | Yes | The tenant's guardrail stored the entries and proofs of every hour before it signed that hour's note (lease evidence BG-5). Arc holds roots only; nothing withheld by the provider's notary can be rebuilt from a root |
 | Overbilling (`E_OVERBILL`), forged or replayed heartbeats, wrong image | — | No | Not paid by construction; nothing to resolve |
 | Unanchored heartbeats (notary down or hostile) | Provider | No | Delivery is defined as anchored delivery; the provider chooses and can run its notary |
 | VM slow or unresponsive while heartbeats continue | Tenant | No, in Stage 0 | PoCC proves liveness, not performance; Stage 1 spot checks address it |
@@ -398,9 +415,12 @@ the time it was opened is fixed and it cannot be withdrawn silently.
 1. **Open.** The claimant signs and anchors the dispute within the policy's dispute
    window (`validity.until`; 7 days after the period in the example policy). Hours
    without an open dispute settle as section 6 describes.
-2. **Freeze.** The hour in dispute is left out of the provider's next batch, so
-   settlement of undisputed hours continues. Warrant's `Ask` outcome for a missing
-   record covers the same case: the batch excludes the hour rather than waiting.
+2. **Freeze.** The hour in dispute cannot be a hole in its batch: batches are
+   contiguous index ranges and a settled batch consumes its obligation (decision 31).
+   The dispute design must give the disputed hour its own obligation: the batch
+   settles it as a zero note, and the referee's result, if it favours the claimant,
+   is paid through a separate obligation keyed by the dispute's hash. This part is
+   unresolved and is why disputes stay future work.
 3. **Re-execute.** A referee runs `pocc verify` on the receipt named in the dispute,
    with its own drand and Arc access. In Stage 0 the referee is any third party both
    sides accept in the policy (`referee_key`); in Stage 1 it is Warrant's guest running
@@ -484,6 +504,7 @@ widening of the Verus claim, golden vectors changed only on purpose.
 
 | ID | Package | Depends on | Acceptance |
 |---|---|---|---|
+| PE-0 | One versioned interface document for the rent case: policy types, signing encodings, journal words, contract ABI, image and schema binding, replay domain; marks superseded text in `lease-evidence.md` and here | Framework step 3 decision (journal, escrow) | Reviewed by the owner; PE-2, PE-3 and PE-6 cite it |
 | PE-1 | Spec update: `docs/product/lease-evidence.md` and `docs/handoff/03-rent-case.md` state the PoCC meter, the `UsageRecord` of section 7, `meter_spec`, `min_uptime_bp`, `min_assurance`, `referee_key`, and the trust table row for the meter key. Answers Decision 6 | — | Owner approves; DL-5 (trust table names the meter key and its failure mode) |
 | PE-2 | `SignedUsage` delivery spec and `deliverySpecHash` in `core/src/framework` | Framework step 1 | A policy without `delivery` or with zero `meter_spec` is rejected; hash pinned in a test |
 | PE-3 | `core/src/meter.rs`: `UsageRecord`, `usage_message` (`warrant/usage/v1`), gates D1–D7 in `authorize_meter`, `deliveryHash` | PE-2, framework step 2 (journal v2) | DL-1 to DL-3; a removed-check test per gate; fixtures from the PoCC live-test receipt |
@@ -515,7 +536,7 @@ widening of the Verus claim, golden vectors changed only on purpose.
 
 | ID | Package | Depends on | Acceptance |
 |---|---|---|---|
-| X-1 | The PoCC verifier runs inside the rent guest as a `computed_result` delivery check: the guest takes the receipt, re-derives credited seconds, and needs no meter key | PE-5, PC-4; guest cycle count measured first | Same verdicts as `pocc-verify` on all fixtures; proving time recorded (ME-8) |
+| X-1 | The PoCC verifier runs inside the rent guest as a `computed_result` delivery check: the guest takes the receipt, re-derives credited seconds, and needs no meter key. The guest cannot fetch anything, so every external input is a witness it authenticates: drand rounds by their BLS signature under the chain's public key (not done today, architecture §8); Arc anchors by a block header chain to a trusted checkpoint the policy names; the Nova record by a provider signature or, in Stage 1, by the attestation report instead. X-1 starts with a written witness design covering these three | PE-5, PC-4; witness design; guest cycle count measured first | Same verdicts as `pocc-verify` on all fixtures; proving time recorded (ME-8) |
 
 ## 11. Sequencing and risks
 

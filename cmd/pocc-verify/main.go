@@ -100,10 +100,10 @@ func main() {
 		pol, err := warrant.Parse(R.Request.Policy)
 		if err == nil {
 			for _, r := range wr {
-				uptime := r.Units * 10000 / (r.WindowEnd - r.WindowStart)
-				verdict := "would pass D5-D7"
+				uptime := r.Units * 10000 / r.Creditable
+				verdict := "would pass D6-D8: a note up to units x price"
 				if uptime < uint64(pol.Delivery.MinUptimeBP) || r.Assurance < pol.Delivery.MinAssurance {
-					verdict = "would be denied: below the policy's floors"
+					verdict = "below the policy's floors: the note must be 0 (D6, D7)"
 				}
 				fmt.Fprintf(os.Stderr, "  hour %d: %d s, uptime %d bp, assurance %d -> %s\n",
 					r.FirstIndex, r.Units, uptime, r.Assurance, verdict)
