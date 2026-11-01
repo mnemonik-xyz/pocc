@@ -1,6 +1,6 @@
 {
   "comment": "Shared decision vectors for gates D4 to D9 (lease evidence 5a.3, DL-12). pocc: pkg/adapter/warrant.Decide; warrant: authorize_meter. service_start 1794819600 = 2026-11-16T09:00:00Z, piece 3600, quicknet grid.",
-  "delivery": {"kind": "signed_usage", "meter_key": "k", "unit": 1, "price_per_unit": 1100, "tolerance": 0, "min_uptime_bp": 10000, "min_assurance": 0, "meter_spec": "00", "service_start": 1794819600, "service_end": 1794906000, "piece_s": 3600, "challenge_timeout_s": 300},
+  "delivery": {"kind": "signed_usage", "meter_key": "k", "unit": 1, "price_per_unit": 1100, "tolerance": 0, "min_coverage_bp": 10000, "min_assurance": 0, "meter_spec": "00", "service_start": 1794819600, "service_end": 1794906000, "piece_s": 3600, "challenge_timeout_s": 300},
   "cases": [
     {"name": "boundary hour, perfect: 3540 of 3540 creditable, full note", "record": {"first_index": 0, "last_index": 0, "window_start": 1794819600, "window_end": 1794823200, "units": 3540, "creditable": 3540, "assurance": 0}, "amount": 3894000, "ok": true},
     {"name": "boundary hour, one slot missed, full note", "record": {"first_index": 0, "last_index": 0, "window_start": 1794819600, "window_end": 1794823200, "units": 3480, "creditable": 3540, "assurance": 0}, "amount": 3828000, "ok": false, "gate": "D6"},

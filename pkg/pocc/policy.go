@@ -174,8 +174,8 @@ type UsageRecord struct {
 	Units       int64  `json:"units"`      // credited seconds in the window
 	Creditable  int64  `json:"creditable"` // the most seconds the window can earn under the slot schedule
 	Assurance   string `json:"assurance"`
-	UptimeBP    int64  `json:"uptime_bp"`  // units x 10000 / creditable
-	MeterSpec   string `json:"meter_spec"` // hex
+	CoverageBP  int64  `json:"coverage_bp"` // units x 10000 / creditable
+	MeterSpec   string `json:"meter_spec"`  // hex
 	ReceiptHash string `json:"receipt_hash"`
 	Sig         string `json:"sig,omitempty"` // PoCC-native Ed25519, optional
 }

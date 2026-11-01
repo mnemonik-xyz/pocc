@@ -35,7 +35,7 @@ it. Later, when the verifier runs inside Warrant's guest, the delivery kind beco
 
 | Repository | Change | Size |
 |---|---|---|
-| policy-execution | Rent case (`core/src/meter.rs`) gains the `signed_usage` delivery check with a `UsageRecord` struct and a `meter_spec` hash; the delivery section carries `min_uptime_bp`; `warrant-evidence sign-usage` | Framework step 8 as planned, plus two fields |
+| policy-execution | Rent case (`core/src/meter.rs`) gains the `signed_usage` delivery check with a `UsageRecord` struct and a `meter_spec` hash; the delivery section carries `min_coverage_bp`; `warrant-evidence sign-usage` | Framework step 8 as planned, plus two fields |
 | pocc | Verifier emits Warrant-shaped usage records; broker answers the per-hour challenge with a note; notary anchors on Arc; policy section matches Warrant's typed struct | Medium |
 | warrant | Compute-rent use case spec: answers the open point "who confirms delivery" for hosted services; marketplace (warrant#13) consumes it | Docs |
 
@@ -47,7 +47,7 @@ cannot be bypassed; only a proof pays.
 
 ```mermaid
 flowchart TB
-    POL["Rent policy, approved by the owner, pinned in the escrow<br/>delivery: signed_usage, meter_key, meter_spec, price, min uptime · rule tree · lease_id · ceiling"]
+    POL["Rent policy, approved by the owner, pinned in the escrow<br/>delivery: signed_usage, meter_key, meter_spec, price, min coverage · rule tree · lease_id · ceiling"]
     subgraph PC["pocc (Go)"]
         AG["Agent in the VM<br/>bound to h0; heartbeat per slot"]
         NT["Notary<br/>one root per slot on Arc (PoccAnchor)"]
@@ -125,7 +125,7 @@ under-credit.
 
 The policy follows Warrant's "one DSL shape" (framework section 8). Its delivery
 section stays meter-agnostic: Warrant's typed struct holds the meter key, the price and
-the uptime floor, plus one hash that pins the meter's own parameters. PoCC's parameters
+the coverage floor, plus one hash that pins the meter's own parameters. PoCC's parameters
 live outside Warrant's types, so adding a beacon or a slot length never changes a
 Warrant struct.
 
@@ -138,13 +138,13 @@ pub struct SignedUsage {
     pub unit: u16,              // 1 = instance-second, 2 = gpu-second (table in core)
     pub price_per_unit: u64,    // token base units per unit
     pub tolerance: u64,         // token base units a note may exceed units*price
-    pub min_uptime_bp: u16,     // Deny a record below this share of its window
+    pub min_coverage_bp: u16,     // Deny a record below this share of its window
     pub min_assurance: u8,      // 0 = L0 (no TEE), 1 = L1 (SEV-SNP)
     pub meter_spec: Hash,       // hash of the meter's parameter document
 }
 ```
 
-`min_uptime_bp` and `min_assurance` sit in the delivery check, not in the rule tree, so
+`min_coverage_bp` and `min_assurance` sit in the delivery check, not in the rule tree, so
 the Verus-proved evaluator and the `Rule` enum do not change. Rule atoms for them can
 follow after framework step 5.
 
@@ -186,7 +186,7 @@ inside the Request together with `policy_hash` from `warrant-policy hash`):
     "unit": 1,
     "price_per_unit": 1100,
     "tolerance": 0,
-    "min_uptime_bp": 9500,
+    "min_coverage_bp": 9500,
     "min_assurance": 0,
     "meter_spec": "<hash of the pocc object>"
   },
@@ -205,7 +205,7 @@ outstanding notes plus the next hour inside the ceiling (SS-10) before it serves
 
 **What each side checks.** Warrant's validator rejects a rent policy without a
 `delivery` section of kind `signed_usage`, with a zero `meter_spec`, or with
-`min_uptime_bp` above 10000. PoCC's verifier recomputes `meter_spec` from the `pocc`
+`min_coverage_bp` above 10000. PoCC's verifier recomputes `meter_spec` from the `pocc`
 object in the Request and compares it with the policy's; on mismatch it reports
 `E_POLICY` and signs no record.
 
@@ -259,7 +259,7 @@ credited interval belongs to the hour in which it ends, with an interval ending 
 on the hour counted in the hour before. drand slots fall at :24 past each minute, so the
 first hour of a period can earn at most 3,540 s. The record therefore carries
 `creditable`: the most seconds the hour can earn under the slot schedule, computed from
-the schedule and the period alone (`verify.Creditable`). The uptime floor is a share of
+the schedule and the period alone (`verify.Creditable`). The coverage floor is a share of
 `creditable`, not of 3,600, so a perfect boundary hour meets a 100 % floor (DL-10).
 Three figures are kept apart: observed runtime (what the machine did; not evidence),
 credited runtime (`units`, what two anchored heartbeats prove), and billable runtime
@@ -277,7 +277,7 @@ consumes it reads that field. Nothing on the path is decided by a party at run t
 |---|---|---|
 | Who may attest delivery | `delivery.kind = signed_usage`, `meter_key` | Only a usage record signed by this key counts as delivery. No record: `Ask`. Wrong key: `Deny`. |
 | What the attestation must have been computed from | `meter_spec` | The record is valid only for a receipt whose evidence matches the pinned PoCC parameters: image, flavor, beacon, slot, bracket, anchor contract, attestation level. The verifier refuses to sign otherwise. |
-| What the attested delivery must satisfy | `price_per_unit`, `tolerance`, `min_uptime_bp`, `min_assurance`, and the `rule` tree | Billed amount at most `units × price + tolerance`; uptime and assurance floors; the owner's spending rules on top. |
+| What the attested delivery must satisfy | `price_per_unit`, `tolerance`, `min_coverage_bp`, `min_assurance`, and the `rule` tree | Billed amount at most `units × price + tolerance`; coverage and assurance floors; the owner's spending rules on top. |
 
 A policy without the first two layers is rejected by Warrant's validator, so a rent
 policy cannot exist without a delivery proof.
@@ -352,7 +352,7 @@ gate, as acceptance ME-1 requires):
 | D3 | Each record's `scope` and `lease_id` equal the policy's; `meter_spec` equals `delivery.meter_spec` | `Deny` |
 | D4 | Each record's window is `[service_start + k × piece_s, service_start + (k+1) × piece_s)` and lies inside the policy's validity | `Deny` |
 | D5 | For each note k: `amount_k ≤ units_k × price_per_unit + tolerance`, and `note.deliverable_hash = hash(record_k)` | `Deny` |
-| D6 | If `units_k × 10000 < min_uptime_bp × creditable_k`, then `amount_k = 0` | `Deny` |
+| D6 | If `units_k × 10000 < min_coverage_bp × creditable_k`, then `amount_k = 0` | `Deny` |
 | D7 | If `assurance_k < min_assurance`, then `amount_k = 0` | `Deny` |
 | D8 | `0 < creditable_k ≤ window_end − window_start`, `units_k ≤ creditable_k`, `assurance_k ∈ {0, 1}` | `Deny` |
 | D9 | Every product and sum is checked; an overflow fails, never wraps | `Deny` |
@@ -528,7 +528,7 @@ widening of the Verus claim, golden vectors changed only on purpose.
 | ID | Package | Depends on | Acceptance |
 |---|---|---|---|
 | PE-0 | One versioned interface document for the rent case: policy types, signing encodings, journal words, contract ABI, image and schema binding, replay domain; marks superseded text in `lease-evidence.md` and here | Framework step 3 decision (journal, escrow) | Reviewed by the owner; PE-2, PE-3 and PE-6 cite it |
-| PE-1 | Spec update: `docs/product/lease-evidence.md` and `docs/handoff/03-rent-case.md` state the PoCC meter, the `UsageRecord` of section 7, `meter_spec`, `min_uptime_bp`, `min_assurance`, `referee_key`, and the trust table row for the meter key. Answers Decision 6 | — | Owner approves; DL-5 (trust table names the meter key and its failure mode) |
+| PE-1 | Spec update: `docs/product/lease-evidence.md` and `docs/handoff/03-rent-case.md` state the PoCC meter, the `UsageRecord` of section 7, `meter_spec`, `min_coverage_bp`, `min_assurance`, `referee_key`, and the trust table row for the meter key. Answers Decision 6 | — | Owner approves; DL-5 (trust table names the meter key and its failure mode) |
 | PE-2 | `SignedUsage` delivery spec and `deliverySpecHash` in `core/src/framework` | Framework step 1 | A policy without `delivery` or with zero `meter_spec` is rejected; hash pinned in a test |
 | PE-3 | `core/src/meter.rs`: `UsageRecord`, `usage_message` (`warrant/usage/v1`), gates D1–D7 in `authorize_meter`, `deliveryHash` | PE-2, framework step 2 (journal v2) | DL-1 to DL-3; a removed-check test per gate; fixtures from the PoCC live-test receipt |
 | PE-4 | `warrant-evidence sign-usage`, `warrant-host check rent` | PE-3 | Signs the JSON `pocc-verify` writes; the native check equals the guest's on the fixtures |
@@ -592,7 +592,7 @@ Reviewed by the owner on 2026-10-29. The full entries, with alternatives and rev
 cost, are in `docs/decisions.md` (entries 15–25).
 
 - [x] D-A. The buyer's PoCC verifier key is the meter key for the rent case (decision 15).
-- [x] D-B. `min_uptime_bp` and `min_assurance` live in the delivery section, not as rule atoms (16). If atoms are needed later: two atoms, two `Facts` fields, two Verus cases, a new rent image; PoCC does not change.
+- [x] D-B. `min_coverage_bp` and `min_assurance` live in the delivery section, not as rule atoms (16). If atoms are needed later: two atoms, two `Facts` fields, two Verus cases, a new rent image; PoCC does not change.
 - [x] D-C. `meter_spec` is an opaque hash in Warrant's typed policy (17).
 - [x] D-D. The usage record is Warrant-native; `pocc-verify` delegates signing to `warrant-evidence sign-usage` (18).
 - [x] D-E. One piece = one clock hour; batch default 24; period aligned to the hour (19).

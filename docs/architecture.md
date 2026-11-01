@@ -29,8 +29,8 @@ assumption, bounded by the slot length; duty cycling inside a slot is not caught
 | Role | Runs where | Holds | Trusted for | Not trusted for |
 |---|---|---|---|---|
 | Tenant | Buyer's machine | Ed25519 signing key, X25519 seal key | Its own request and policy | — |
-| Provider (seller) | A reseller renting the machine from an OpenStack cloud under its own account (first arrangement, decision 33); or the cloud itself | Escrow recipient key, cloud credentials | Accepting the escrow order; paying the cloud's own invoice | Meter readings, uptime, billing |
-| Cloud (amnezia.cloud) | OpenStack | — | Nothing of Warrant | Running the machine; it bills the seller on its own terms |
+| Provider (seller) | A clearly identified reseller renting the machine from an OpenStack cloud under its own account, with an explicit spending limit at the cloud (pilot arrangement, decision 33) | Escrow recipient key, cloud credentials | Accepting the escrow order; paying the cloud's own invoice; terminating the machine and its volumes | Meter readings, coverage, billing |
+| Cloud (amnezia.cloud) | OpenStack | — | Nothing of Warrant; it does not accept Warrant payments | Running the machine; it bills the reseller on its own terms |
 | Agent (`pocc-agent`) | Inside the tenant's VM | Agent key and disclosure seed, created at boot | Producing heartbeats (Stage 0: assumes the provider does not read VM memory) | — |
 | Notary (`pocc-notary`) | Any host with a public IP | Anchor wallet or anchor key | Nothing; everything it serves is checkable | Time, order, content |
 | Beacon (drand quicknet) | Public network | — | Unpredictable values on a fixed 3 s schedule | — |

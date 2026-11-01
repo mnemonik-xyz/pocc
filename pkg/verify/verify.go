@@ -260,7 +260,7 @@ func checkProof(ctx context.Context, env Env, p pocc.BatchProof, leaf []byte) (i
 // hour and lies inside the period. It depends on the slot schedule and the
 // period only, never on the evidence, so boundary hours of a period earn less
 // than 3,600 s (the beacon's slots do not fall on the hour) and a perfect
-// boundary hour still meets a 100 % uptime floor.
+// boundary hour still meets a 100 % coverage floor.
 func Creditable(info pocc.BeaconInfo, slot uint64, start, end time.Time) map[string]int64 {
 	out := map[string]int64{}
 	r := beacon.RoundAt(info, start)
@@ -322,7 +322,7 @@ func UsageRecords(R *pocc.Receipt, v pocc.Verdict, sign func(any) (string, error
 		}
 		rec := pocc.UsageRecord{Version: pocc.Version, Lease: pocc.Hex(pocc.LeaseID(R.Request)),
 			Hour: int64(t.Sub(start) / time.Hour), WindowStart: t.Unix(), WindowEnd: t.Add(time.Hour).Unix(),
-			Unit: "instance-second", Units: s, Creditable: cr, Assurance: v.Assurance, UptimeBP: s * 10000 / cr,
+			Unit: "instance-second", Units: s, Creditable: cr, Assurance: v.Assurance, CoverageBP: s * 10000 / cr,
 			MeterSpec: meterSpec, ReceiptHash: v.ReceiptHash}
 		if sign != nil {
 			if rec.Sig, err = sign(rec); err != nil {

@@ -39,12 +39,12 @@ func Decide(d Delivery, r UsageRecord, amount uint64) error {
 		return fmt.Errorf("D5: amount %d above units x price + tolerance %d", amount, due)
 	}
 	hi, lhs := bits.Mul64(r.Units, 10000)
-	hi2, rhs := bits.Mul64(uint64(d.MinUptimeBP), r.Creditable)
+	hi2, rhs := bits.Mul64(uint64(d.MinCoverageBP), r.Creditable)
 	if hi != 0 || hi2 != 0 {
-		return errors.New("D9: uptime product overflows")
+		return errors.New("D9: coverage product overflows")
 	}
 	if lhs < rhs && amount != 0 {
-		return fmt.Errorf("D6: uptime %d bp below %d, note must be 0", lhs/r.Creditable, d.MinUptimeBP)
+		return fmt.Errorf("D6: coverage %d bp below %d, note must be 0", lhs/r.Creditable, d.MinCoverageBP)
 	}
 	if r.Assurance < d.MinAssurance && amount != 0 {
 		return errors.New("D7: assurance below the floor, note must be 0")

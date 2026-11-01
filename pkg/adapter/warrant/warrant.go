@@ -57,14 +57,14 @@ type Validity struct {
 
 // Delivery is Warrant's typed SignedUsage delivery section.
 type Delivery struct {
-	Kind         string `json:"kind"`
-	MeterKey     string `json:"meter_key"`
-	Unit         uint16 `json:"unit"`
-	PricePerUnit int64  `json:"price_per_unit"`
-	Tolerance    int64  `json:"tolerance"`
-	MinUptimeBP  uint16 `json:"min_uptime_bp"`
-	MinAssurance uint8  `json:"min_assurance"`
-	MeterSpec    string `json:"meter_spec"`
+	Kind          string `json:"kind"`
+	MeterKey      string `json:"meter_key"`
+	Unit          uint16 `json:"unit"`
+	PricePerUnit  int64  `json:"price_per_unit"`
+	Tolerance     int64  `json:"tolerance"`
+	MinCoverageBP uint16 `json:"min_coverage_bp"`
+	MinAssurance  uint8  `json:"min_assurance"`
+	MeterSpec     string `json:"meter_spec"`
 	// The service period and piece length: the origin of the piece index
 	// (lease evidence 5a.1). PoCC checks they equal its request's period.
 	ServiceStart      int64 `json:"service_start"`
@@ -106,8 +106,8 @@ func Check(q pocc.Request) (int64, error) {
 		return 0, fmt.Errorf("unit %d not supported by this verifier", d.Unit)
 	case d.PricePerUnit <= 0 || d.PricePerUnit > q.MaxRateMicros:
 		return 0, errors.New("price_per_unit is zero or above the request's maximum rate")
-	case d.MinUptimeBP > 10000:
-		return 0, errors.New("min_uptime_bp above 10000")
+	case d.MinCoverageBP > 10000:
+		return 0, errors.New("min_coverage_bp above 10000")
 	case p.MaxNote < 3600*d.PricePerUnit:
 		return 0, errors.New("max_note below the price of a full hour (lease evidence 5a.6)")
 	case p.Ceiling < p.MaxNote || p.BatchSize == 0:

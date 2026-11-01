@@ -67,7 +67,7 @@ func TestT1HappyPath(t *testing.T) {
 		if err := pocc.VerifyDoc(meterKey, pocc.TagUsageRecord, r, r.Sig); err != nil {
 			t.Fatalf("usage record signature: %v", err)
 		}
-		if r.Lease != pocc.Hex(pocc.LeaseID(R.Request)) || r.UptimeBP > 10000 || r.Hour < 0 || r.Hour > 8 {
+		if r.Lease != pocc.Hex(pocc.LeaseID(R.Request)) || r.CoverageBP > 10000 || r.Hour < 0 || r.Hour > 8 {
 			t.Fatalf("bad record %+v", r)
 		}
 	}
@@ -82,14 +82,14 @@ func TestT1HappyPath(t *testing.T) {
 	// DL-10: a perfect boundary hour meets a 100 % floor, because the floor is a
 	// share of what the slot schedule lets the hour earn, not of 3,600 s.
 	for i, r := range recs[:8] {
-		if r.Units != r.Creditable || r.UptimeBP != 10000 {
-			t.Fatalf("record %d: %d of %d creditable, %d bp", i, r.Units, r.Creditable, r.UptimeBP)
+		if r.Units != r.Creditable || r.CoverageBP != 10000 {
+			t.Fatalf("record %d: %d of %d creditable, %d bp", i, r.Units, r.Creditable, r.CoverageBP)
 		}
 	}
 	// The agent stopped one slot into the ninth hour of a period that runs to
 	// its end: 60 s earned of 3,600 s creditable, which is below any floor.
-	if recs[0].Creditable != 3540 || recs[1].Creditable != 3600 || recs[8].Creditable != 3600 || recs[8].UptimeBP != 166 {
-		t.Fatalf("creditable: %d %d %d, last %d bp", recs[0].Creditable, recs[1].Creditable, recs[8].Creditable, recs[8].UptimeBP)
+	if recs[0].Creditable != 3540 || recs[1].Creditable != 3600 || recs[8].Creditable != 3600 || recs[8].CoverageBP != 166 {
+		t.Fatalf("creditable: %d %d %d, last %d bp", recs[0].Creditable, recs[1].Creditable, recs[8].Creditable, recs[8].CoverageBP)
 	}
 }
 
@@ -274,8 +274,8 @@ func TestT9Outage(t *testing.T) {
 	assertNoteDenied(t, R, v, 100*60/3600, 3600*RateMicros)
 	recs, _ := verify.UsageRecords(R, v, nil)
 	for _, r := range recs {
-		if r.Hour == 100*60/3600 && (r.Creditable != 3600 || r.UptimeBP >= 9500) {
-			t.Fatalf("outage hour: %d of %d, %d bp", r.Units, r.Creditable, r.UptimeBP)
+		if r.Hour == 100*60/3600 && (r.Creditable != 3600 || r.CoverageBP >= 9500) {
+			t.Fatalf("outage hour: %d of %d, %d bp", r.Units, r.Creditable, r.CoverageBP)
 		}
 	}
 }

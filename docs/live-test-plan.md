@@ -62,7 +62,7 @@ and checked by the verifier.
 | UTC | Step | Who |
 |---|---|---|
 | 20:51 | Network, router, notary VM, floating IP | Provider |
-| 20:53 | Tenant signs request (period 21:00–22:00, rule: assurance ≥ L0 and uptime ≥ 95 %) | Tenant |
+| 20:53 | Tenant signs request (period 21:00–22:00, rule: assurance ≥ L0 and coverage ≥ 95 %) | Tenant |
 | 20:53 | Agent VM created, bound to the escrow order | Provider |
 | 20:57 | HTTPS gateway VM | Operator |
 | 21:00 | Agent VM recreated so its log reaches the serial console (needed to read its key) | Provider |
@@ -80,7 +80,7 @@ and checked by the verifier.
 | L2 | Provider bills from its own meter | Compare Nova `os-simple-tenant-usage` for the period (printed by `pocc-broker receipt`) with the credited seconds | Nova's figure is higher: it counts the build time before boot and the paused time. A note for that amount fails Warrant gate D5 |
 | L3 | Provider stops delivery | Nova `pause` for about 10 minutes mid-period | One gap; the gap and the interval across it earn nothing. Late heartbeats, if any, earn nothing either |
 | L4 | Usage records | `pocc-verify -warrant-records` | `VALID_WITH_GAPS`; one PoCC-native and one Warrant-shaped record for 21:00–22:00, `lease_id` and `meter_spec` equal to the policy's |
-| L5 | Policy decides payment | Floor check printed by `pocc-verify` (D6, D7) | Denied: uptime about 7,700 bp is below the 9,500 bp the tenant required |
+| L5 | Policy decides payment | Floor check printed by `pocc-verify` (D6, D7) | Denied: coverage about 7,700 bp is below the 9,500 bp the tenant required |
 | L6 | Binding | The receipt verified against another escrow order id | `INVALID` with `E_BIND` |
 
 Credit arithmetic for the expected values, with boot at 21:02:24, the final
@@ -88,7 +88,7 @@ heartbeat at 21:59:24 and a pause covering k missed slots:
 
 ```latex
 T_{\text{credited}} = (57 - (k + 1)) \times 60\ \text{s}, \qquad
-\text{uptime}_{\text{bp}} = \left\lfloor \frac{T_{\text{credited}} \times 10000}{3600} \right\rfloor
+\text{coverage}_{\text{bp}} = \left\lfloor \frac{T_{\text{credited}} \times 10000}{3600} \right\rfloor
 ```
 
 For k = 10: 2,760 s credited and 7,666 bp.

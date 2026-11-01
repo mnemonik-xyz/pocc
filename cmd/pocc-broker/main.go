@@ -102,7 +102,7 @@ func request(args []string) {
 	token := fs.String("token", "", "warrant: token address")
 	maxNote := fs.Int64("max-note", 0, "warrant: per-hour cap in token units (default 3600 x price)")
 	ceiling := fs.Int64("ceiling", 0, "warrant: order ceiling in token units (default hours x max-note)")
-	minUptime := fs.Int("min-uptime-bp", 9500, "warrant: uptime floor in basis points")
+	minCoverage := fs.Int("min-coverage-bp", 9500, "warrant: coverage floor in basis points")
 	rule := fs.String("rule", `{"all":["accepted"]}`, "warrant: rule tree")
 	out := fs.String("out", "request.json", "output")
 	_ = fs.Parse(args)
@@ -156,7 +156,7 @@ func request(args []string) {
 				Validity: warrant.Validity{After: ps.Unix(), Until: pe.Add(7 * 24 * time.Hour).Unix()},
 				LeaseID:  pocc.Hex(pocc.LeaseID(q)), Ceiling: *ceiling, MaxNote: *maxNote, BatchSize: 24,
 				Delivery: warrant.Delivery{Kind: warrant.KindSignedUsage, MeterKey: *meter, Unit: warrant.UnitInstanceSecond,
-					PricePerUnit: *price, MinUptimeBP: uint16(*minUptime), MeterSpec: pocc.Hex(ms),
+					PricePerUnit: *price, MinCoverageBP: uint16(*minCoverage), MeterSpec: pocc.Hex(ms),
 					ServiceStart: ps.Unix(), ServiceEnd: pe.Unix(), PieceS: 3600, ChallengeTimeoutS: 300},
 				Rule: json.RawMessage(*rule)}
 			q.Policy, _ = json.MarshalIndent(p, "", "  ")
