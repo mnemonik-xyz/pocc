@@ -24,7 +24,7 @@ const (
 	ServerID   = "0d6b2f4e-sim"
 	Flavor     = "d2.cpu1ram1"
 	ImageID    = "img-pocc-agent-sim"
-	RateMicros = 1100 // 0.0011 currency units per second
+	RateMicros = 1100 // policy price: 0.0011 token units per second
 	SlotRounds = 20
 	BracketS   = 30
 )
@@ -35,17 +35,14 @@ type World struct {
 	Beacon      beacon.Fake
 	TenantPriv  ed25519.PrivateKey
 	TenantSeal  *ecdh.PrivateKey
-	ProvPriv    ed25519.PrivateKey
-	ProvSeal    *ecdh.PrivateKey
 	AnchorPub   string
 	MeterPriv   ed25519.PrivateKey
 	Request     pocc.Request
-	Order       pocc.Order
 	Notary      *notary.Notary
 	Clock       time.Time
 	AnchorDelay func(slot uint64) time.Duration
 	Slot0       uint64
-	Escrow      *pocc.EscrowOrder // set by NewEscrowWorld
+	Escrow      pocc.EscrowOrder
 	MeterSpec   pocc.MeterSpec
 }
 
@@ -58,17 +55,16 @@ const (
 	FakePolicyHash = "0x3333333333333333333333333333333333333333333333333333333333333333"
 )
 
-// NewWorld creates parties, a signed request with its policy, and a signed order
-// for a period of n slots starting at the first slot after start.
+// NewWorld creates parties and a tenant-signed request that carries a Warrant
+// rent policy priced at policyPrice, for a period of n slots starting at the
+// first slot after start. The deal is bound to a simulated escrow order.
 func NewWorld(n int, policyPrice int64) *World {
 	w := &World{Info: beacon.Quicknet}
 	w.Beacon = beacon.Fake{Info: w.Info}
 	_, w.TenantPriv = pocc.GenerateSigningKey()
-	_, w.ProvPriv = pocc.GenerateSigningKey()
 	meterPub, meterPriv := pocc.GenerateSigningKey()
 	w.MeterPriv = meterPriv
 	w.TenantSeal, _ = pocc.GenerateSealKey()
-	w.ProvSeal, _ = pocc.GenerateSealKey()
 	anchorPub, anchorPriv := pocc.GenerateSigningKey()
 	w.AnchorPub = pocc.B64.EncodeToString(anchorPub)
 
@@ -88,44 +84,18 @@ func NewWorld(n int, policyPrice int64) *World {
 		MaxRateMicros: 1200, Currency: "EUR", Attestation: pocc.AttestationNone, AllowedImage: ImageID,
 		TenantPubKey:  pocc.B64.EncodeToString(w.TenantPriv.Public().(ed25519.PublicKey)),
 		TenantSealKey: pocc.B64.EncodeToString(w.TenantSeal.PublicKey().Bytes()),
-		MeterSpec:     &w.MeterSpec,
+		MeterSpec:     w.MeterSpec,
+		Consumer:      pocc.ConsumerWarrant,
+		PolicyHash:    FakePolicyHash,
 	}
-	_ = policyPrice
-	_ = meterPub
+	ms, _ := pocc.MeterSpecHash(w.MeterSpec)
+	w.Request.Policy = WarrantPolicy(w.Request, pocc.B64.EncodeToString(meterPub), policyPrice, pocc.Hex(ms))
 	w.Request.Sig, _ = pocc.SignDoc(w.TenantPriv, pocc.TagRequest, w.Request)
-	w.Order = w.NewOrder("ord-sim-1")
+	w.Escrow = pocc.EscrowOrder{ChainID: EscrowChainID, Escrow: EscrowAddr, OrderID: EscrowOrderID}
 
 	w.AnchorDelay = func(uint64) time.Duration { return 5 * time.Second }
 	dev := &anchor.DevFile{Key: anchorPriv, Now: func() time.Time { return w.Clock }}
 	w.Notary, _ = notary.New(w.Info, SlotRounds, dev, "")
-	return w
-}
-
-// NewOrder signs an order for the world's request.
-func (w *World) NewOrder(id string) pocc.Order {
-	rh, _ := pocc.DocHash(pocc.TagRequest, w.Request)
-	o := pocc.Order{Version: pocc.Version, OrderID: id, RequestHash: pocc.Hex(rh), RateMicros: RateMicros,
-		Currency: "EUR", Beacon: w.Info, Notary: pocc.NotaryInfo{URL: "sim", AnchorKey: w.AnchorPub},
-		SlotRounds: SlotRounds, BracketS: BracketS,
-		ProviderPubKey:  pocc.B64.EncodeToString(w.ProvPriv.Public().(ed25519.PublicKey)),
-		ProviderSealKey: pocc.B64.EncodeToString(w.ProvSeal.PublicKey().Bytes())}
-	o.Sig, _ = pocc.SignDoc(w.ProvPriv, pocc.TagOrder, o)
-	return o
-}
-
-// NewEscrowWorld is NewWorld in escrow mode: the request carries a Warrant
-// rent policy and the deal is bound to a (simulated) escrow order. There is no
-// provider-signed Order.
-func NewEscrowWorld(n int, policyPrice int64) *World {
-	w := NewWorld(n, policyPrice)
-	ms, _ := pocc.MeterSpecHash(w.MeterSpec)
-	meterPub := w.MeterPriv.Public().(ed25519.PublicKey)
-	w.Request.Sig = ""
-	w.Request.Consumer = pocc.ConsumerWarrant
-	w.Request.PolicyHash = FakePolicyHash
-	w.Request.Policy = WarrantPolicy(w.Request, pocc.B64.EncodeToString(meterPub), policyPrice, pocc.Hex(ms))
-	w.Request.Sig, _ = pocc.SignDoc(w.TenantPriv, pocc.TagRequest, w.Request)
-	w.Escrow = &pocc.EscrowOrder{ChainID: EscrowChainID, Escrow: EscrowAddr, OrderID: EscrowOrderID}
 	return w
 }
 
@@ -168,7 +138,6 @@ func (w *World) Run(n int, skip func(i int) bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	a.ProviderSealKey = w.Order.ProviderSealKey
 	r0 := w.Slot0 - SlotRounds
 	w.Clock = beacon.Time(w.Info, r0).Add(w.AnchorDelay(r0))
 	if _, err := a.Boot(ctx, r0); err != nil {
@@ -193,14 +162,11 @@ func (w *World) Run(n int, skip func(i int) bool) (string, error) {
 }
 
 func (w *World) binding() (pocc.Binding, error) {
-	if w.Escrow != nil {
-		return pocc.EscrowBinding(w.Request, *w.Escrow, map[string]pocc.BeaconInfo{w.Info.ChainHash: w.Info})
-	}
-	return pocc.OfflineBinding(w.Request, w.Order)
+	return pocc.EscrowBinding(w.Request, w.Escrow, map[string]pocc.BeaconInfo{w.Info.ChainHash: w.Info})
 }
 
-// Receipt assembles a provider-signed receipt with the final usage disclosed.
-func (w *World) Receipt(agentPub string, billedSeconds int64) (*pocc.Receipt, error) {
+// Receipt assembles the receipt with the final usage disclosed by the tenant.
+func (w *World) Receipt(agentPub string) (*pocc.Receipt, error) {
 	entries := w.Notary.Entries(agentPub)
 	last := entries[len(entries)-1].Seq
 	ops, err := receipt.Disclose(entries, w.TenantSeal, []uint64{last}, pocc.UsageFields)
@@ -208,30 +174,13 @@ func (w *World) Receipt(agentPub string, billedSeconds int64) (*pocc.Receipt, er
 		return nil, err
 	}
 	nova := &pocc.NovaServer{ID: ServerID, Flavor: Flavor, ImageID: ImageID, Status: "ACTIVE"}
-	billed := pocc.Billed{Seconds: billedSeconds, AmountMicros: billedSeconds * RateMicros}
-	R, err := receipt.Assemble(w.Request, w.Order, w.Notary, agentPub, nova, billed, ops, w.ProvPriv)
-	if err != nil {
-		return nil, err
-	}
-	if w.Escrow != nil {
-		R.Order = pocc.Order{}
-		R.EscrowOrder = w.Escrow
-		w.Resign(R)
-	}
-	return R, nil
-}
-
-// Resign re-signs a tampered receipt with the provider key, as a cheating
-// provider would.
-func (w *World) Resign(R *pocc.Receipt) {
-	R.Sig, _ = pocc.SignDoc(w.ProvPriv, pocc.TagReceipt, R)
+	return receipt.Assemble(w.Request, w.Escrow, w.Notary, agentPub, nova, ops)
 }
 
 // Verify runs the verifier with the world's independent sources.
 func (w *World) Verify(R *pocc.Receipt) pocc.Verdict {
 	return verify.Verify(context.Background(), R, verify.Env{
 		Beacon: w.Beacon, Anchors: anchor.DevChecker{PubKey: w.AnchorPub}, Forks: w.Notary,
-		ProviderKey: w.Order.ProviderPubKey,
 	})
 }
 

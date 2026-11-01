@@ -28,8 +28,7 @@ import (
 func main() {
 	in := flag.String("receipt", "receipt.json", "receipt to verify")
 	out := flag.String("out", "-", "where to write the verdict")
-	anchorKey := flag.String("anchor-key", "", "trusted dev anchor key (default: the order's or the meter spec's, with a warning)")
-	providerKey := flag.String("provider-key", "", "pin the provider's public key (required for the receipt signature in escrow mode)")
+	anchorKey := flag.String("anchor-key", "", "trusted dev anchor key (default: the meter spec's, with a warning)")
 	notaryURL := flag.String("notary", "", "optional notary URL for fork checks")
 	insecure := flag.Bool("notary-insecure-tls", false, "accept a self-signed gateway certificate for the fork check")
 	meterKeys := flag.String("meter-keys", "", "PoCC key file; signs the PoCC-native usage records")
@@ -45,25 +44,16 @@ func main() {
 	if err := jsonfile.Read(*in, &R); err != nil {
 		log.Fatal(err)
 	}
-	chainHash := R.Order.Beacon.ChainHash
-	if R.EscrowOrder != nil && R.Request.MeterSpec != nil {
-		chainHash = R.Request.MeterSpec.BeaconChainHash
-	}
-	if chainHash != beacon.Quicknet.ChainHash {
-		log.Fatalf("beacon %s named; this verifier trusts drand quicknet only", chainHash)
+	if ch := R.Request.MeterSpec.BeaconChainHash; ch != beacon.Quicknet.ChainHash {
+		log.Fatalf("beacon %s named; this verifier trusts drand quicknet only", ch)
 	}
 	ak := *anchorKey
 	if ak == "" {
-		if R.EscrowOrder != nil && R.Request.MeterSpec != nil {
-			ak = R.Request.MeterSpec.Anchor.AnchorKey
-			fmt.Fprintln(os.Stderr, "warning: using the anchor key named in the tenant-signed meter spec; pass -anchor-key to pin it")
-		} else {
-			ak = R.Order.Notary.AnchorKey
-			fmt.Fprintln(os.Stderr, "warning: using the anchor key named in the order; pass -anchor-key to pin it")
-		}
+		ak = R.Request.MeterSpec.Anchor.AnchorKey
+		fmt.Fprintln(os.Stderr, "warning: using the anchor key named in the tenant-signed meter spec; pass -anchor-key to pin it")
 	}
 	env := verify.Env{Beacon: beacon.NewHTTP(beacon.Quicknet), Anchors: anchor.DevChecker{PubKey: ak},
-		ProviderKey: *providerKey, KnownBeacons: beacon.Known}
+		KnownBeacons: beacon.Known}
 	if *notaryURL != "" {
 		tr := http.DefaultTransport.(*http.Transport).Clone()
 		if *insecure {

@@ -1,5 +1,5 @@
 // Command pocc-agent runs inside the tenant's VM. It reads the signed request
-// and order, binds to them at boot, and sends a heartbeat on every 60 s slot
+// and the escrow order, binds to them at boot, and sends a heartbeat on every 60 s slot
 // until the period ends or it receives SIGTERM.
 package main
 
@@ -22,16 +22,14 @@ import (
 	"github.com/mnemonik-xyz/pocc/pkg/pocc"
 )
 
-// Config is /etc/pocc/agent.json, written by cloud-init. Exactly one of
-// Order (offline mode) and EscrowOrder (escrow mode) is set.
+// Config is /etc/pocc/agent.json, written by cloud-init.
 type Config struct {
-	Request     pocc.Request      `json:"request"`
-	Order       *pocc.Order       `json:"order,omitempty"`
-	EscrowOrder *pocc.EscrowOrder `json:"escrow_order,omitempty"`
+	Request     pocc.Request     `json:"request"`
+	EscrowOrder pocc.EscrowOrder `json:"escrow_order"`
 }
 
 func main() {
-	cfgPath := flag.String("config", "/etc/pocc/agent.json", "request and order JSON")
+	cfgPath := flag.String("config", "/etc/pocc/agent.json", "request and escrow order JSON")
 	serverID := flag.String("server-id", "", "Nova server ID (default: metadata service, then cloud-init)")
 	flag.Parse()
 	log.SetFlags(log.LstdFlags | log.LUTC)
@@ -47,18 +45,7 @@ func main() {
 	if id == "" {
 		log.Fatal("cannot determine the server ID; pass -server-id")
 	}
-	var (
-		bind pocc.Binding
-		err  error
-	)
-	switch {
-	case cfg.EscrowOrder != nil:
-		bind, err = pocc.EscrowBinding(cfg.Request, *cfg.EscrowOrder, beacon.Known)
-	case cfg.Order != nil:
-		bind, err = pocc.OfflineBinding(cfg.Request, *cfg.Order)
-	default:
-		err = fmt.Errorf("config has neither order nor escrow_order")
-	}
+	bind, err := pocc.EscrowBinding(cfg.Request, cfg.EscrowOrder, beacon.Known)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -66,9 +53,6 @@ func main() {
 		agent.ProcCounters{}, agent.HTTPNotary{URL: bind.NotaryURL})
 	if err != nil {
 		log.Fatal(err)
-	}
-	if cfg.Order != nil {
-		a.ProviderSealKey = cfg.Order.ProviderSealKey
 	}
 	a.Logf = log.Printf
 

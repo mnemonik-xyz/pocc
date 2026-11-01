@@ -1,6 +1,11 @@
 # Live test results: amnezia.cloud, 2026-10-28, 21:00–22:00 UTC
 
 Plan: [docs/live-test-plan.md](../../../docs/live-test-plan.md).
+
+History: this run predates the escrow binding (decisions 23 and 30). Its request has
+no `meter_spec` or policy and its receipt carries a provider-signed order and bill, so
+the current verifier rejects these files. They stay as the record of the run and of
+findings F1 and F2; the next run produces fixtures in the current format.
 VMs built commit `88e5b9d`. Receipts were assembled and verified with the
 verifier from the commit that adds this file, which credits late heartbeats
 with nothing instead of rejecting the receipt (finding F2).

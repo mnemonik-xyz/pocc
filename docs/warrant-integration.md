@@ -88,7 +88,7 @@ record is the only object that crosses the line, and it is Warrant-native.
 | Delivery evidence | Receipt (boot proof, heartbeats, anchors) | Usage record signed by `meter_key` | `pocc verify` produces the record from the receipt |
 | Buyer's consent to pay for a piece | Settlement (accept) | Note: `Acceptance` signed by the acceptance key, `task_id = note_id(lease_id, k)` | The guardrail signs note k only after a verdict for hour k that is not INVALID |
 | Policy | `RentPolicy` carried in the Request | Typed rent policy, hashed with `warrant/policy/v1` over bincode | PoCC carries the exact JSON Warrant approved; it reads only `delivery` |
-| Policy hash | — | `policy_hash` from `warrant-host hash` | PoCC stores it in the Request; never recomputes it |
+| Policy hash | — | `policy_hash` from `warrant-policy hash` | PoCC stores it in the Request; never recomputes it |
 | Meter parameters | `delivery.pocc` object | `meter_spec: Hash` inside the delivery section | `meter_spec = H("PoCC/poc/meter-spec", JCS(delivery.pocc))` |
 | Lease | Order ID | `lease_id` (= `poId` on chain) | `lease_id = H("PoCC/poc/lease", tenant_pubkey, request_id, period)` |
 | Obligation | — | `obligation_id(lease_id, batch)` | One batch = one settlement |
@@ -162,7 +162,7 @@ follow after framework step 5.
 ```
 
 **Policy as the owner approves it** (Warrant JSON; PoCC carries these bytes unchanged
-inside the Request together with `policy_hash` from `warrant-host hash`):
+inside the Request together with `policy_hash` from `warrant-policy hash`):
 
 ```json
 {
@@ -231,8 +231,11 @@ h_0 = H(\texttt{PoCC/poc/order} \,\|\, \text{policy\_hash} \,\|\, \text{lease\_i
 ```
 
 The agent reads the five values from the config drive; the verifier recomputes `h0`
-from the policy and the chain and refuses any other. The standalone PoCC Order remains
-only as the offline mode for running PoCC without an escrow (the Stage 0 demo).
+from the policy and the chain and refuses any other. There is no other mode (decision
+30): the executed policy decides the proof, and PoCC runs only when the policy names
+`signed_usage` with a `meter_spec`. A buyer content with the provider's word picks
+Warrant's `signed_acceptance` kind instead. The receipt carries no bill and no provider
+signature; the bill is the provider's notes, checked against the usage records (D5).
 
 **Hour index.** Hour k covers `[period.start + k*3600, period.start + (k+1)*3600)`. The
 period start is aligned to a clock hour by the broker (the verifier reports `E_PERIOD`
@@ -264,7 +267,7 @@ policy cannot exist without a delivery proof.
 
 | # | Step | Demanded by | Produces | Checked by |
 |---|---|---|---|---|
-| 1 | Owner approves the policy; `policy_hash` and `deliverySpecHash` are computed | — | Policy JSON, two hashes | `warrant-host hash`; the buyer's own review |
+| 1 | Owner approves the policy; `policy_hash` and `deliverySpecHash` are computed | — | Policy JSON, two hashes | `warrant-policy hash`; the buyer's own review |
 | 2 | Tenant signs the Request carrying the policy and `policy_hash` | — | Request, `request_hash`, `lease_id` | Provider (before order), PoCC verifier |
 | 3 | Buyer funds the escrow order: `offer(policyHash, deliverySpecHash, lease_id, ceiling, deadlines)` | `scope`, `ceiling`, `validity` | Escrow order | Escrow stores both hashes; nothing settles against other values |
 | 4 | Provider calls `accept(orderId)` and boots the VM with `h0` derived from the escrow order | `meter_spec.flavor`, `allowed_image`, `lease_id` | `h0` | PoCC verifier recomputes `h0` from the policy and the chain: `E_BIND` on any other value |
@@ -549,5 +552,6 @@ cost, are in `docs/decisions.md` (entries 15–25).
 - [x] One order: the escrow order replaces the PoCC Order (23).
 - [x] PoCC core stays consumer-agnostic; Warrant code in `pkg/adapter/warrant` (24).
 - [x] One guardrail key for the registry, acceptance and meter roles in v1 (25).
+- [x] One mode, escrow only: the policy decides the proof; `meter_spec` mandatory; the PoCC Order and the offline path removed (30, 2 Nov).
 
 Phase B on the PoCC side is implemented (PC-1, PC-2: commit after this one). Phase A is open for review: PE-1 is policy-execution [#76](https://github.com/mnemonik-xyz/policy-execution/pull/76), W-1 is warrant [#16](https://github.com/mnemonik-xyz/warrant/pull/16). Both are drafts; the owner merges.

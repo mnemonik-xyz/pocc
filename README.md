@@ -19,13 +19,16 @@ logs every design decision with its alternatives and reversal cost.
 
 ## How it works, in one paragraph
 
-The tenant signs a request that carries a Warrant rent policy. The provider signs
-an order bound to that request. An agent inside the VM binds itself to the order
-at boot, then signs a chained heartbeat on every shared 60-second drand slot. A
+The tenant signs a request that carries a Warrant rent policy and PoCC's meter
+spec, so the proof of delivery is fixed before anything runs. The buyer funds an
+escrow order on Warrant; the provider accepts it. An agent inside the VM binds
+itself to the policy and the escrow order at boot, then signs a chained heartbeat
+on every shared 60-second drand slot. A
 notary anchors one Merkle root per slot for all VMs on a chain, which fixes when
 each heartbeat existed. The verifier checks the chain, the beacon values and the
-anchors, credits only unbroken time, and signs hourly usage records that Warrant's
-escrow accepts as delivery evidence.
+anchors, credits only unbroken time, and writes hourly usage records that Warrant's
+escrow checks the provider's notes against. PoCC has no mode of its own: it runs
+when the executed policy names it as the delivery proof.
 
 ## Components
 
@@ -34,7 +37,7 @@ escrow accepts as delivery evidence.
 | `pocc-agent` | Runs in the VM: boot proof, heartbeats, final heartbeat |
 | `pocc-notary` | Batches entries per slot, anchors roots, serves proofs |
 | `pocc-verify` | Checks a receipt, prints the verdict, signs usage records |
-| `pocc-broker` | Signs requests and orders, provisions on OpenStack, assembles receipts |
+| `pocc-broker` | Signs requests, provisions on OpenStack, assembles receipts |
 
 ## Build and test
 

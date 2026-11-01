@@ -10,8 +10,9 @@ import (
 
 // MeterSpec is PoCC's own parameter document: which proofs count. A consumer
 // such as Warrant pins its hash (meter_spec) in its policy and never learns the
-// fields. The verifier takes these values from the tenant-signed Request, never
-// from the provider's order or the receipt (integration spec section 4).
+// fields. It is mandatory in the Request (decision 30): the verifier takes
+// these values from the tenant-signed Request and from nowhere else, so the
+// proof of delivery is fixed before anything runs.
 type MeterSpec struct {
 	Format             string     `json:"format"`
 	Attestation        string     `json:"attestation"`
@@ -59,15 +60,15 @@ func LeaseID(q Request) []byte {
 }
 
 // EscrowOrder names the consumer's on-chain order that pays for this lease.
-// With it, the escrow order is the order (decision 23): no provider-signed
-// PoCC Order exists, and h0 is derived from these values.
+// The escrow order is the order (decision 23): the provider's acceptance is
+// accept(orderId) on the escrow, and h0 is derived from these values.
 type EscrowOrder struct {
 	ChainID uint64 `json:"chain_id"`
 	Escrow  string `json:"escrow"`   // contract address, 0x-hex
 	OrderID string `json:"order_id"` // 32-byte order id, 0x-hex or hex
 }
 
-// EscrowH0 is the boot binding in escrow mode:
+// EscrowH0 is the boot binding:
 //
 //	h0 = H(order ‖ policy_hash ‖ lease_id ‖ chain_id ‖ escrow ‖ orderId)
 func EscrowH0(policyHash, leaseID []byte, chainID uint64, escrow, orderID []byte) []byte {
@@ -82,15 +83,13 @@ func Unhex0x(field, s string) ([]byte, error) {
 	return Unhex(field, s)
 }
 
-// Consumer names. A Request with a Consumer carries that consumer's policy.
-const (
-	ConsumerNone    = ""
-	ConsumerWarrant = "warrant"
-)
+// Consumer names. A Request carries its consumer's policy; the consumer's
+// adapter checks it (decision 24).
+const ConsumerWarrant = "warrant"
 
 // Binding is everything the agent needs to bind to a deal: the boot binding
-// h0 and the timing and notary settings. It comes from an offline Order or from
-// an EscrowOrder plus the Request's MeterSpec.
+// h0 and the timing and notary settings. It comes from the EscrowOrder plus
+// the Request's MeterSpec.
 type Binding struct {
 	H0         []byte
 	SlotRounds uint64
@@ -99,31 +98,14 @@ type Binding struct {
 	NotaryURL  string
 }
 
-// OfflineBinding derives the binding from a provider-signed Order (offline mode).
-func OfflineBinding(q Request, o Order) (Binding, error) {
-	rh, err := DocHash(TagRequest, q)
-	if err != nil {
-		return Binding{}, err
-	}
-	if o.RequestHash != Hex(rh) {
-		return Binding{}, fmt.Errorf("order does not belong to this request")
-	}
-	if err := VerifyDoc(o.ProviderPubKey, TagOrder, o, o.Sig); err != nil {
-		return Binding{}, fmt.Errorf("order signature: %w", err)
-	}
-	h0, err := DocHash(TagOrder, o)
-	if err != nil {
-		return Binding{}, err
-	}
-	return Binding{H0: h0, SlotRounds: uint64(o.SlotRounds), BracketS: o.BracketS, Beacon: o.Beacon, NotaryURL: o.Notary.URL}, nil
-}
-
 // EscrowBinding derives the binding from the escrow order and the Request's
-// policy hash and meter spec (escrow mode). knownBeacons maps a chain hash to
-// its BeaconInfo.
+// policy hash and meter spec. knownBeacons maps a chain hash to its BeaconInfo.
 func EscrowBinding(q Request, e EscrowOrder, knownBeacons map[string]BeaconInfo) (Binding, error) {
-	if q.MeterSpec == nil || q.PolicyHash == "" {
-		return Binding{}, fmt.Errorf("request has no meter spec or policy hash")
+	if err := CheckMeterSpec(q); err != nil {
+		return Binding{}, err
+	}
+	if q.PolicyHash == "" {
+		return Binding{}, fmt.Errorf("request has no policy hash")
 	}
 	ph, err := Unhex0x("policy_hash", q.PolicyHash)
 	if err != nil {
@@ -153,9 +135,6 @@ func EscrowBinding(q Request, e EscrowOrder, knownBeacons map[string]BeaconInfo)
 // consumer-agnostic; a consumer's own policy checks live in its adapter.
 func CheckMeterSpec(q Request) error {
 	m := q.MeterSpec
-	if m == nil {
-		return fmt.Errorf("no meter spec")
-	}
 	switch {
 	case m.Format != Version:
 		return fmt.Errorf("meter spec format %q", m.Format)
@@ -197,7 +176,7 @@ type UsageRecord struct {
 	UptimeBP    int64  `json:"uptime_bp"`
 	MeterSpec   string `json:"meter_spec"` // hex
 	ReceiptHash string `json:"receipt_hash"`
-	Sig         string `json:"sig,omitempty"` // PoCC-native Ed25519, offline mode
+	Sig         string `json:"sig,omitempty"` // PoCC-native Ed25519, optional
 }
 
 // TagUsageRecord domain-separates PoCC-native usage record signatures.

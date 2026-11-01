@@ -53,6 +53,7 @@ handoff (`docs/handoff/`).
 | 27 | 2026-10-29 | `lease_id = H(lease, tenant_pubkey, request_id, period)`; not `H(lease, request_hash)` | Taken, not yet reviewed by the owner | Integration §5, `pkg/pocc` | Formula change; leases of existing requests change |
 | 28 | 2026-10-29 | A credited interval belongs to the hour it ends in; one ending exactly on the hour belongs to the hour before | Taken, not yet reviewed by the owner | Verifier | Changes which hour edge intervals credit, not the total |
 | 29 | 2026-10-29 | In escrow mode the receipt's billed fields and signature are optional; billing is through the consumer's notes | Taken, not yet reviewed by the owner | Verifier | Make them mandatory again |
+| 30 | 2026-11-02 | One mode, escrow only: the proof of delivery is whatever the executed policy says; PoCC is one delivery kind (`signed_usage`); `meter_spec` mandatory in the Request; the PoCC `Order` type and the offline path removed. Amends the last clause of 23 | Taken | Verifier, agent, broker, sim, `docs/architecture.md` | Reinstate the `Order` type and the offline branch; old fixtures verify again |
 
 ## Decisions in full
 
@@ -172,7 +173,7 @@ delivery, so it is a cost of selling; estimated under 1 % of the hour price acro
 to have two? Defend it." *Outcome:* no reason survived; the escrow order already holds
 everything, and `accept(orderId)` is the provider's signature. *Consequence:* `h0` is
 derived from the escrow order; the provider-signed PoCC Order survives only as the
-offline mode. *Reversal:* reinstate the Order type as the source of `h0`.
+offline mode (that clause is amended by 30). *Reversal:* reinstate the Order type as the source of `h0`.
 
 **24 Consumer-agnostic core, adapter per consumer.** *Owner's question:* fit
 policy-execution or stay universal. *Outcome:* both: the core stays universal, the
@@ -189,3 +190,16 @@ usage record is the single interception point, and Warrant code lives in
 *Outcome:* registry, acceptance and meter roles share one secp256k1 key in v1
 (Warrant's own rent spec already uses the buyer's key as registry); the policy keeps
 three fields so they can diverge. *Reversal:* issue separate keys; no format change.
+
+**30 One mode, escrow only.** *Owner's question:* why two modes, when the proof of
+delivery is signed into the initial policy. *Found:* the "offline mode" was the Stage 0
+scaffolding that gave the agent an `h0` before the escrow existed; the provider's Order
+chose the beacon, slot and notary after the buyer signed, which breaks the requirement
+that the proof is fixed in the policy. The "buyer trusts a signature" case is not a PoCC
+mode either: it is Warrant's `signed_acceptance` delivery kind. *Outcome:* the executed
+policy decides the proof; PoCC runs only when a policy names it through
+`delivery.kind = signed_usage` and a `meter_spec`; `meter_spec` is mandatory in the
+Request; the `Order` type, the `-order` path and the verifier's offline branch are
+removed; decision 29 stops being a special case (the bill is always Warrant notes). The
+`test/live/2026-10-28` fixtures stay as history and no longer verify. *Reversal:*
+reinstate the `Order` type and the branch.

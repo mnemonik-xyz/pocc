@@ -14,19 +14,18 @@ import (
 
 // Domain tags. Every hash in PoCC is H(tag, parts...).
 const (
-	TagRequest    = "PoCC/poc/request"
-	TagOrder      = "PoCC/poc/order"
-	TagBoot       = "PoCC/poc/boot"
-	TagHeartbeat  = "PoCC/poc/hb"
-	TagLeaf       = "PoCC/poc/leaf"
-	TagUsage      = "PoCC/poc/usage"
-	TagSeedEnc    = "PoCC/poc/seed-enc"
-	TagEntry      = "PoCC/poc/entry"
-	TagReceipt    = "PoCC/poc/receipt"
-	TagVerdict    = "PoCC/poc/verdict"
-	TagSettlement = "PoCC/poc/settlement"
-	TagAnchor     = "PoCC/poc/anchor"
-	TagGPU        = "PoCC/poc/gpu"
+	TagRequest   = "PoCC/poc/request"
+	TagOrder     = "PoCC/poc/order" // h0 over the escrow order (EscrowH0)
+	TagBoot      = "PoCC/poc/boot"
+	TagHeartbeat = "PoCC/poc/hb"
+	TagLeaf      = "PoCC/poc/leaf"
+	TagUsage     = "PoCC/poc/usage"
+	TagSeedEnc   = "PoCC/poc/seed-enc"
+	TagEntry     = "PoCC/poc/entry"
+	TagReceipt   = "PoCC/poc/receipt"
+	TagVerdict   = "PoCC/poc/verdict"
+	TagAnchor    = "PoCC/poc/anchor"
+	TagGPU       = "PoCC/poc/gpu"
 )
 
 // H is SHA-256 over the tag and the parts, each prefixed with its 4-byte

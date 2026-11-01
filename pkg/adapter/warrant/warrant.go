@@ -4,7 +4,7 @@
 // Warrant's UsageRecord JSON (integration spec sections 4 and 7).
 //
 // PoCC never computes Warrant's hashes or signatures: policy_hash comes from
-// `warrant-host hash`, and records are signed by `warrant-evidence sign-usage`,
+// `warrant-policy hash`, and records are signed by `warrant-evidence sign-usage`,
 // which this package can invoke as an external command.
 package warrant
 
@@ -81,10 +81,7 @@ func Check(q pocc.Request) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if q.MeterSpec == nil {
-		return 0, errors.New("request has no meter spec")
-	}
-	ms, err := pocc.MeterSpecHash(*q.MeterSpec)
+	ms, err := pocc.MeterSpecHash(q.MeterSpec)
 	if err != nil {
 		return 0, err
 	}

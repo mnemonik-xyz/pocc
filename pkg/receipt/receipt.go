@@ -5,7 +5,6 @@ package receipt
 import (
 	"context"
 	"crypto/ecdh"
-	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,16 +22,18 @@ type Source interface {
 	Proof(agent string, seq uint64) (pocc.BatchProof, bool)
 }
 
-// Assemble builds and signs a receipt. It includes the boot proof and every
-// heartbeat that is already anchored, stopping at the first one that is not.
-func Assemble(req pocc.Request, order pocc.Order, src Source, agent string, nova *pocc.NovaServer,
-	billed pocc.Billed, openings []pocc.Opening, providerPriv ed25519.PrivateKey) (*pocc.Receipt, error) {
+// Assemble builds a receipt. It includes the boot proof and every heartbeat
+// that is already anchored, stopping at the first one that is not. Anyone with
+// access to the notary's log can assemble it; it carries no signature and no
+// bill (decision 30).
+func Assemble(req pocc.Request, esc pocc.EscrowOrder, src Source, agent string, nova *pocc.NovaServer,
+	openings []pocc.Opening) (*pocc.Receipt, error) {
 	entries := src.Entries(agent)
 	if len(entries) == 0 || entries[0].Seq != 0 || entries[0].Boot == nil {
 		return nil, errors.New("no boot proof for this agent")
 	}
-	R := &pocc.Receipt{Version: pocc.Version, Request: req, Order: order, Boot: *entries[0].Boot,
-		NovaServer: nova, Billed: billed, Openings: openings}
+	R := &pocc.Receipt{Version: pocc.Version, Request: req, EscrowOrder: esc, Boot: *entries[0].Boot,
+		NovaServer: nova, Openings: openings}
 	for i, e := range entries {
 		if e.Seq != uint64(i) {
 			break
@@ -46,16 +47,11 @@ func Assemble(req pocc.Request, order pocc.Order, src Source, agent string, nova
 			R.Heartbeats = append(R.Heartbeats, *e.Heartbeat)
 		}
 	}
-	sig, err := pocc.SignDoc(providerPriv, pocc.TagReceipt, R)
-	if err != nil {
-		return nil, err
-	}
-	R.Sig = sig
 	return R, nil
 }
 
-// Disclose opens the given fields at the given heartbeats. The caller holds a
-// seal key that the agent sealed the seed to (tenant or provider).
+// Disclose opens the given fields at the given heartbeats. The caller holds
+// the tenant's seal key, the one the agent sealed the seed to.
 func Disclose(entries []pocc.Entry, sealPriv *ecdh.PrivateKey, seqs []uint64, fields []string) ([]pocc.Opening, error) {
 	if len(entries) == 0 || entries[0].Boot == nil {
 		return nil, errors.New("no boot proof")

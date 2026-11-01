@@ -13,7 +13,7 @@ proven hours only.
 | Role | Runs where | Holds | Trusted for | Not trusted for |
 |---|---|---|---|---|
 | Tenant | Buyer's machine | Ed25519 signing key, X25519 seal key | Its own request and policy | — |
-| Provider | OpenStack cloud (amnezia.cloud) | Ed25519 signing key, X25519 seal key | Signing its order and receipt | Meter readings, uptime, billing |
+| Provider | OpenStack cloud (amnezia.cloud) | Escrow recipient key | Accepting the escrow order | Meter readings, uptime, billing |
 | Agent (`pocc-agent`) | Inside the tenant's VM | Agent key and disclosure seed, created at boot | Producing heartbeats (Stage 0: assumes the provider does not read VM memory) | — |
 | Notary (`pocc-notary`) | Any host with a public IP | Anchor wallet or anchor key | Nothing; everything it serves is checkable | Time, order, content |
 | Beacon (drand quicknet) | Public network | — | Unpredictable values on a fixed 3 s schedule | — |
@@ -83,7 +83,7 @@ flowchart TB
         subgraph VM["Tenant VM (Stage 0: no TEE; Stage 1: SEV-SNP)"]
             AG["pocc-agent<br/>agent key + seed"]
         end
-        RC["Receipt assembly<br/>signed by provider"]
+        RC["Receipt assembly<br/>from the notary's log"]
     end
     subgraph PUB["Public infrastructure"]
         DR["drand quicknet<br/>round every 3 s"]
@@ -94,7 +94,7 @@ flowchart TB
         GU["Guest: signed_usage delivery check<br/>+ rule evaluation"]
         ES["Escrow<br/>pins policyHash, deliverySpecHash"]
     end
-    RQ -->|"order binds request_hash"| NOVA
+    RQ -->|"escrow order: h0 = H(policy_hash, lease_id, order)"| NOVA
     NOVA -->|"boots VM, h0 via config drive"| AG
     DR -->|"round values"| AG
     AG -->|"boot proof, heartbeats"| NT
@@ -123,11 +123,11 @@ sequenceDiagram
     participant V as Verifier (meter)
     participant W as Warrant guest + escrow
 
-    T->>T: write rent policy (delivery = signed_usage, meter_key, pocc params)
-    T->>P: Request (resources, period, image, policy), signed
-    P->>T: Order (request_hash, rate, beacon, notary), signed, h0 = H(order)
+    T->>T: write rent policy (delivery = signed_usage, meter_key, meter_spec)
+    T->>P: Request (resources, period, image, meter_spec, policy), signed
     T->>W: fund escrow: offer(policyHash, deliverySpecHash, ceiling)
-    P->>A: create server (Nova), h0 in config drive
+    P->>W: accept(orderId)
+    P->>A: create server (Nova), h0 = H(policy_hash, lease_id, chain, escrow, orderId) in config drive
 
     A->>D: next slot round r0
     A->>A: new agent key + seed, e0 = H(h0, server, key, r0, rand0, seed_enc)
@@ -141,13 +141,14 @@ sequenceDiagram
     A->>N: final heartbeat, key erased
     P->>P: delete server
 
-    P->>N: fetch entries and inclusion proofs
-    P->>V: Receipt (request, order, boot, heartbeats, proofs, billed), signed
+    V->>N: fetch entries and inclusion proofs
+    V->>V: Receipt (request, escrow order, boot, heartbeats, proofs); no bill, no signature
     V->>D: fetch every round independently
     V->>C: check roots and block times
     V->>V: verify chain, bind to h0 and policy, credit per hour
     V->>W: usage record per hour, signed with meter_key
-    W->>W: check record under meter_key, billed ≤ units × price, evaluate rule
+    P->>W: note per hour (the bill)
+    W->>W: check record under meter_key, note ≤ units × price (D5), evaluate rule
     W->>P: pay proven hours, remainder returns to tenant after settle-by
 ```
 
@@ -158,13 +159,13 @@ Every arrow is a hash inclusion, so changing any earlier artifact breaks every l
 ```mermaid
 flowchart LR
     POL["Rent policy<br/>delivery + rule"] --> REQ["Request<br/>signed by tenant"]
-    REQ -->|"request_hash"| ORD["Order<br/>signed by provider<br/>h0 = H(order)"]
+    REQ -->|"policy_hash, lease_id"| ORD["Escrow order<br/>chain, escrow, orderId<br/>h0 = H(policy_hash, lease_id, order)"]
     ORD -->|"h0"| E0["Boot e0<br/>signed by agent"]
     E0 -->|"e0"| E1["Heartbeat e1"]
     E1 -->|"e1"| E2["…"]
     E2 --> EN["Final e_n"]
     E0 & E1 & EN -->|"leaves"| ROOT["Batch roots<br/>on chain"]
-    EN --> RCP["Receipt<br/>signed by provider"]
+    EN --> RCP["Receipt<br/>evidence, unsigned"]
     ROOT --> RCP
     RCP -->|"receipt_hash"| VER["Verdict"]
     VER --> UR["Usage records<br/>per hour, meter_key"]
@@ -203,20 +204,25 @@ length-prefixed (see [deviations](#8-deviations-from-the-spec)).
 | `pkg/verify` | Verifier (spec 5) with policy checks, hourly usage records | Done |
 | `pkg/agent` | Boot proof, heartbeat loop, counters, final heartbeat | Done |
 | `cmd/*` | `pocc-agent`, `pocc-notary`, `pocc-verify`, `pocc-broker` | Done; smoke-tested locally against real drand |
-| `internal/sim` | Simulated acceptance tests T1, T3, T4, T6–T9 plus Stage 0 checks | Done |
-| `pkg/openstack` | Minimal OpenStack client for the broker | Done; used in the 2026-10-28 live test |
+| `internal/sim` | Simulated acceptance tests T1, T3, T4, T6–T9 plus Stage 0 and policy checks | Done; T6 is Warrant gate D5 on the usage record |
+| `pkg/openstack` | Minimal OpenStack client for the broker | Done; used in the 2026-10-28 live test (pre-escrow fixtures, kept as history) |
 | `pkg/adapter/warrant` | The only package that knows Warrant's shapes: policy check, usage records as Warrant JSON, external signer | Done (PC-1, PC-2); awaits Warrant's `sign-usage` and `check rent` |
 
-## 7a. Two modes: offline and escrow
+## 7a. One mode: the policy decides the proof
 
-| | Offline mode | Escrow mode (integration spec) |
-|---|---|---|
-| The order | A provider-signed PoCC `Order` | The consumer's escrow order: `{chain_id, escrow, order_id}` |
-| `h0` | `H(order ‖ JCS(Order))` | `H(order ‖ policy_hash ‖ lease_id ‖ chain_id ‖ escrow ‖ orderId)` |
-| Timing and notary | From the Order | From the Request's `meter_spec` |
-| Price | The Order's rate, at most the Request's maximum | The consumer policy's `price_per_unit`, at most the Request's maximum |
-| Policy check | None (a `meter_spec`, if present, must match the Order) | `E_POLICY` from the consumer adapter; `E_PERIOD` unless the period starts on a clock hour |
-| Billing | The receipt's billed fields, signed by the provider | The consumer's notes; the receipt's billed fields are optional and checked when present |
+PoCC has no mode of its own (decision 30). The buyer's signed policy names the
+delivery kind; PoCC runs only when it says `signed_usage` with a `meter_spec`. A
+buyer who is content with the provider's word picks Warrant's `signed_acceptance`
+instead, and PoCC is not involved.
+
+| | Where it comes from |
+|---|---|
+| The order | The consumer's escrow order: `{chain_id, escrow, order_id}`; the provider's acceptance is `accept(orderId)` |
+| `h0` | `H(order ‖ policy_hash ‖ lease_id ‖ chain_id ‖ escrow ‖ orderId)` |
+| Timing and notary | The Request's `meter_spec`, mandatory and tenant-signed |
+| Price | The consumer policy's `price_per_unit`, at most the Request's maximum |
+| Policy check | `E_POLICY` from the consumer adapter; `E_PERIOD` unless the period starts on a clock hour |
+| Billing | The consumer's notes, checked against the usage records (Warrant gate D5). The receipt carries no bill and no signature |
 
 The consumer adapter registers with `verify.RegisterConsumer(name, check)`; the core
 never imports an adapter. `pkg/adapter/warrant` is the first.

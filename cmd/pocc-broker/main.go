@@ -46,8 +46,8 @@ func main() {
 		usage()
 	}
 	cmds := map[string]func([]string){
-		"keygen": keygen, "request": request, "order": order, "netsetup": netsetup,
-		"provision": provision, "fip": fip, "receipt": mkReceipt, "settle": settle,
+		"keygen": keygen, "request": request, "netsetup": netsetup,
+		"provision": provision, "fip": fip, "receipt": mkReceipt,
 		"image": image, "pause": pause, "down": down, "ip": ip,
 	}
 	f, ok := cmds[os.Args[1]]
@@ -58,7 +58,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: pocc-broker keygen|request|order|netsetup|provision|fip|receipt|settle|image|pause|down [flags]")
+	fmt.Fprintln(os.Stderr, "usage: pocc-broker keygen|request|netsetup|provision|fip|receipt|image|pause|down|ip [flags]")
 	os.Exit(2)
 }
 
@@ -90,13 +90,12 @@ func request(args []string) {
 	image := fs.String("image", "", "allowed Glance image ID")
 	start := fs.String("start", "", "period start, RFC 3339, on a clock hour")
 	end := fs.String("end", "", "period end, RFC 3339")
-	price := fs.Int64("price", 0, "agreed price in currency micro-units per second")
-	currency := fs.String("currency", "EUR", "currency (offline mode)")
+	price := fs.Int64("price", 0, "price per second in token units (the policy's price_per_unit)")
+	currency := fs.String("currency", "USDC", "currency label of the token")
 	notaryURL := fs.String("notary", "", "notary URL (meter spec)")
 	anchorKey := fs.String("anchor-key", "", "notary's dev anchor key (meter spec, dev-file anchor)")
-	consumer := fs.String("consumer", "", "\"warrant\" to carry a Warrant rent policy; empty for offline mode")
 	meter := fs.String("meter-key", "", "warrant: meter key named in the policy (SEC1 hex or any string the policy uses)")
-	policyHash := fs.String("policy-hash", "", "warrant: policy hash from warrant-host hash (hex)")
+	policyHash := fs.String("policy-hash", "", "warrant: policy hash from warrant-policy hash (hex); required")
 	policyFile := fs.String("policy", "", "warrant: use this approved policy JSON instead of building one")
 	chain := fs.Uint64("chain-id", 0, "warrant: escrow chain ID")
 	vault := fs.String("vault", "", "warrant: escrow address")
@@ -113,8 +112,8 @@ func request(args []string) {
 	must(err)
 	pe, err := time.Parse(time.RFC3339, *end)
 	must(err)
-	if *image == "" || *price <= 0 {
-		log.Fatal("-image and -price are required")
+	if *image == "" || *price <= 0 || *policyHash == "" {
+		log.Fatal("-image, -price and -policy-hash are required")
 	}
 	if ps.Unix()%3600 != 0 {
 		log.Fatal("-start must be on a clock hour (decision 19)")
@@ -127,14 +126,11 @@ func request(args []string) {
 		Period:        pocc.Period{Start: ps.UTC().Format(time.RFC3339), End: pe.UTC().Format(time.RFC3339)},
 		MaxRateMicros: *price, Currency: *currency, Attestation: pocc.AttestationNone, AllowedImage: *image,
 		TenantPubKey: t.File.SigningPub, TenantSealKey: t.File.SealPub,
-		MeterSpec: &pocc.MeterSpec{Format: pocc.Version, Attestation: pocc.AttestationNone, AllowedImage: *image,
+		MeterSpec: pocc.MeterSpec{Format: pocc.Version, Attestation: pocc.AttestationNone, AllowedImage: *image,
 			Flavor: *flavor, BeaconChainHash: beacon.Quicknet.ChainHash, SlotRounds: 20, BracketS: 30,
-			Anchor: pocc.AnchorSpec{Kind: anchor.KindDevFile, AnchorKey: *anchorKey}, NotaryURL: *notaryURL}}
-	if *consumer == pocc.ConsumerWarrant {
-		if *policyHash == "" {
-			log.Fatal("-policy-hash is required with -consumer warrant (from warrant-host hash)")
-		}
-		q.Consumer, q.PolicyHash = pocc.ConsumerWarrant, *policyHash
+			Anchor: pocc.AnchorSpec{Kind: anchor.KindDevFile, AnchorKey: *anchorKey}, NotaryURL: *notaryURL},
+		Consumer: pocc.ConsumerWarrant, PolicyHash: *policyHash}
+	{
 		if *policyFile != "" {
 			b, err := os.ReadFile(*policyFile)
 			must(err)
@@ -146,7 +142,7 @@ func request(args []string) {
 			if !json.Valid([]byte(*rule)) {
 				log.Fatal("-rule is not valid JSON")
 			}
-			ms, err := pocc.MeterSpecHash(*q.MeterSpec)
+			ms, err := pocc.MeterSpecHash(q.MeterSpec)
 			must(err)
 			hours := int64(pe.Sub(ps) / time.Hour)
 			if *maxNote == 0 {
@@ -172,39 +168,6 @@ func request(args []string) {
 	must(err)
 	must(jsonfile.Write(*out, q))
 	fmt.Fprintf(os.Stderr, "request %s written to %s (lease %s)\n", q.RequestID, *out, pocc.Hex(pocc.LeaseID(q)))
-}
-
-func order(args []string) {
-	fs := flag.NewFlagSet("order", flag.ExitOnError)
-	reqPath := fs.String("request", "request.json", "signed request")
-	k := fs.String("keys", "provider.json", "provider key file")
-	id := fs.String("id", "", "order ID (default: generated)")
-	notaryURL := fs.String("notary", "", "notary URL reachable from the VM")
-	anchorKey := fs.String("anchor-key", "", "notary's dev anchor key (GET /v0/info)")
-	out := fs.String("out", "order.json", "output")
-	_ = fs.Parse(args)
-	var q pocc.Request
-	must(jsonfile.Read(*reqPath, &q))
-	must(pocc.VerifyDoc(q.TenantPubKey, pocc.TagRequest, q, q.Sig))
-	p, err := keys.Load(*k)
-	must(err)
-	if *notaryURL == "" {
-		log.Fatal("-notary is required")
-	}
-	rh, err := pocc.DocHash(pocc.TagRequest, q)
-	must(err)
-	if *id == "" {
-		*id = fmt.Sprintf("ord-%d", time.Now().Unix())
-	}
-	o := pocc.Order{Version: pocc.Version, OrderID: *id, RequestHash: pocc.Hex(rh),
-		RateMicros: q.MaxRateMicros, Currency: q.Currency, Beacon: beacon.Quicknet,
-		Notary: pocc.NotaryInfo{URL: *notaryURL, AnchorKey: *anchorKey}, SlotRounds: 20, BracketS: 30,
-		ProviderPubKey: p.File.SigningPub, ProviderSealKey: p.File.SealPub}
-	o.Sig, err = pocc.SignDoc(p.Signing, pocc.TagOrder, o)
-	must(err)
-	must(jsonfile.Write(*out, o))
-	h0, _ := pocc.DocHash(pocc.TagOrder, o)
-	fmt.Fprintf(os.Stderr, "order %s written to %s, h0 %s\n", o.OrderID, *out, pocc.Hex(h0))
 }
 
 func netsetup(args []string) {
@@ -346,10 +309,9 @@ func provision(args []string) {
 	backend := fs.String("backend", "", "gateway: notary private address, e.g. 10.42.0.190:8080")
 	host := fs.String("host", "", "gateway: public hostname, e.g. 85-204-255-147.sslip.io")
 	reqPath := fs.String("request", "request.json", "agent: signed request")
-	ordPath := fs.String("order", "order.json", "agent, offline mode: signed order")
-	escChain := fs.Uint64("escrow-chain-id", 0, "agent, escrow mode: chain ID of the escrow order")
-	escAddr := fs.String("escrow", "", "agent, escrow mode: escrow contract address")
-	escOrder := fs.String("escrow-order-id", "", "agent, escrow mode: 32-byte order id, hex")
+	escChain := fs.Uint64("escrow-chain-id", 0, "agent: chain ID of the escrow order")
+	escAddr := fs.String("escrow", "", "agent: escrow contract address")
+	escOrder := fs.String("escrow-order-id", "", "agent: 32-byte order id, hex")
 	userDataOut := fs.String("user-data-out", "", "also write the user data to this file")
 	_ = fs.Parse(args)
 	if *image == "" || *network == "" {
@@ -363,22 +325,11 @@ func provision(args []string) {
 		if q.Resource.Flavor != *flavor || q.AllowedImage != *image {
 			log.Fatal("flavor and image must match the request")
 		}
-		cfgMap := map[string]any{"request": q}
-		if *escOrder != "" {
-			e := pocc.EscrowOrder{ChainID: *escChain, Escrow: *escAddr, OrderID: *escOrder}
-			if _, err := pocc.EscrowBinding(q, e, beacon.Known); err != nil {
-				log.Fatalf("escrow binding: %v", err)
-			}
-			cfgMap["escrow_order"] = e
-		} else {
-			var o pocc.Order
-			must(jsonfile.Read(*ordPath, &o))
-			if _, err := pocc.OfflineBinding(q, o); err != nil {
-				log.Fatalf("order: %v", err)
-			}
-			cfgMap["order"] = o
+		e := pocc.EscrowOrder{ChainID: *escChain, Escrow: *escAddr, OrderID: *escOrder}
+		if _, err := pocc.EscrowBinding(q, e, beacon.Known); err != nil {
+			log.Fatalf("escrow binding (-escrow-chain-id, -escrow, -escrow-order-id): %v", err)
 		}
-		cfg, _ := json.Marshal(cfgMap)
+		cfg, _ := json.Marshal(map[string]any{"request": q, "escrow_order": e})
 		files["/etc/pocc/agent.json"] = string(cfg)
 		files["/etc/systemd/system/pocc-agent.service"] = agentUnit
 	case "notary":
@@ -479,37 +430,27 @@ func fip(args []string) {
 func mkReceipt(args []string) {
 	fs := flag.NewFlagSet("receipt", flag.ExitOnError)
 	reqPath := fs.String("request", "request.json", "signed request")
-	ordPath := fs.String("order", "order.json", "offline mode: signed order")
-	escChain := fs.Uint64("escrow-chain-id", 0, "escrow mode: chain ID of the escrow order")
-	escAddr := fs.String("escrow", "", "escrow mode: escrow contract address")
-	escOrder := fs.String("escrow-order-id", "", "escrow mode: 32-byte order id, hex")
-	k := fs.String("keys", "provider.json", "provider key file")
+	escChain := fs.Uint64("escrow-chain-id", 0, "chain ID of the escrow order")
+	escAddr := fs.String("escrow", "", "escrow contract address")
+	escOrder := fs.String("escrow-order-id", "", "32-byte order id, hex")
+	k := fs.String("keys", "", "tenant key file: discloses the final usage counters (optional)")
 	agentPub := fs.String("agent", "", "agent public key (from the boot proof)")
 	serverID := fs.String("server", "", "Nova server ID")
-	billed := fs.Int64("billed-seconds", -1, "seconds to bill (default: Nova's own usage meter)")
-	novaJSON := fs.String("nova-json", "", "offline: read the Nova server record from this file instead of OpenStack")
-	notaryURL := fs.String("notary-url", "", "read the notary here instead of the order's URL (e.g. an HTTPS gateway)")
+	novaJSON := fs.String("nova-json", "", "read the Nova server record from this file instead of OpenStack")
+	notaryURL := fs.String("notary-url", "", "read the notary here instead of the meter spec's URL (e.g. an HTTPS gateway)")
 	insecure := fs.Bool("notary-insecure-tls", false, "accept a self-signed gateway certificate; notary data is verified by signature anyway")
 	out := fs.String("out", "receipt.json", "output")
 	_ = fs.Parse(args)
 	var q pocc.Request
-	var o pocc.Order
-	var esc *pocc.EscrowOrder
 	must(jsonfile.Read(*reqPath, &q))
-	nURL := *notaryURL
-	if *escOrder != "" {
-		esc = &pocc.EscrowOrder{ChainID: *escChain, Escrow: *escAddr, OrderID: *escOrder}
-		if nURL == "" && q.MeterSpec != nil {
-			nURL = q.MeterSpec.NotaryURL
-		}
-	} else {
-		must(jsonfile.Read(*ordPath, &o))
-		if nURL == "" {
-			nURL = o.Notary.URL
-		}
+	esc := pocc.EscrowOrder{ChainID: *escChain, Escrow: *escAddr, OrderID: *escOrder}
+	if _, err := pocc.EscrowBinding(q, esc, beacon.Known); err != nil {
+		log.Fatalf("escrow binding (-escrow-chain-id, -escrow, -escrow-order-id): %v", err)
 	}
-	p, err := keys.Load(*k)
-	must(err)
+	nURL := *notaryURL
+	if nURL == "" {
+		nURL = q.MeterSpec.NotaryURL
+	}
 	ctx := context.Background()
 	src := receipt.NotaryClient{URL: nURL, Client: notaryHTTP(*insecure)}
 	entries := src.Entries(*agentPub)
@@ -517,12 +458,8 @@ func mkReceipt(args []string) {
 		log.Fatal("notary has no entries for this agent")
 	}
 	nova := &pocc.NovaServer{}
-	secs := *billed
 	if *novaJSON != "" {
 		must(jsonfile.Read(*novaJSON, nova))
-		if secs < 0 {
-			log.Fatal("-billed-seconds is required with -nova-json")
-		}
 	} else {
 		c, err := openstack.FromEnv(ctx)
 		must(err)
@@ -531,64 +468,28 @@ func mkReceipt(args []string) {
 		img, err := c.ServerImageID(ctx, s)
 		must(err)
 		nova = &pocc.NovaServer{ID: s.ID, Flavor: s.Flavor.OriginalName, ImageID: img, Created: s.Created, Status: s.Status}
-		if secs < 0 {
-			ps, _ := time.Parse(time.RFC3339, q.Period.Start)
-			pe, _ := time.Parse(time.RFC3339, q.Period.End)
-			secs, err = c.UsageSeconds(ctx, s.ID, ps, pe)
-			must(err)
-			fmt.Fprintf(os.Stderr, "Nova's usage meter: %d s\n", secs)
+		ps, _ := time.Parse(time.RFC3339, q.Period.Start)
+		pe, _ := time.Parse(time.RFC3339, q.Period.End)
+		if secs, err := c.UsageSeconds(ctx, s.ID, ps, pe); err == nil {
+			// For comparison with the verdict only; the receipt carries no bill.
+			fmt.Fprintf(os.Stderr, "Nova's own usage meter: %d s\n", secs)
 		}
 	}
-	last := entries[len(entries)-1].Seq
-	ops, err := receipt.Disclose(entries, p.Seal, []uint64{last}, pocc.UsageFields)
-	if err != nil {
-		// In escrow mode the seed is sealed to the tenant only; the tenant
-		// discloses usage fields itself when it needs them.
-		fmt.Fprintf(os.Stderr, "no openings in the receipt (%v)\n", err)
-		ops = nil
-	}
-	rate := o.RateMicros
-	if esc != nil {
-		rate = q.MaxRateMicros
-	}
-	R, err := receipt.Assemble(q, o, src, *agentPub, nova,
-		pocc.Billed{Seconds: secs, AmountMicros: secs * rate}, ops, p.Signing)
-	must(err)
-	if esc != nil {
-		R.EscrowOrder = esc
-		R.Sig, err = pocc.SignDoc(p.Signing, pocc.TagReceipt, R)
+	var ops []pocc.Opening
+	if *k != "" {
+		t, err := keys.Load(*k)
 		must(err)
+		last := entries[len(entries)-1].Seq
+		ops, err = receipt.Disclose(entries, t.Seal, []uint64{last}, pocc.UsageFields)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "no openings in the receipt (%v)\n", err)
+			ops = nil
+		}
 	}
+	R, err := receipt.Assemble(q, esc, src, *agentPub, nova, ops)
+	must(err)
 	must(jsonfile.Write(*out, R))
 	fmt.Fprintf(os.Stderr, "receipt with %d heartbeat(s) written to %s\n", len(R.Heartbeats), *out)
-}
-
-func settle(args []string) {
-	fs := flag.NewFlagSet("settle", flag.ExitOnError)
-	rPath := fs.String("receipt", "receipt.json", "receipt")
-	vPath := fs.String("verdict", "verdict.json", "verdict")
-	k := fs.String("keys", "tenant.json", "tenant key file")
-	out := fs.String("out", "settlement.json", "output")
-	_ = fs.Parse(args)
-	var R pocc.Receipt
-	var v pocc.Verdict
-	must(jsonfile.Read(*rPath, &R))
-	must(jsonfile.Read(*vPath, &v))
-	t, err := keys.Load(*k)
-	must(err)
-	rh, _ := pocc.DocHash(pocc.TagReceipt, R)
-	if pocc.Hex(rh) != v.ReceiptHash {
-		log.Fatal("verdict is for a different receipt")
-	}
-	vh, _ := pocc.DocHash(pocc.TagVerdict, v)
-	s := pocc.Settlement{Version: pocc.Version, ReceiptHash: v.ReceiptHash, VerdictHash: pocc.Hex(vh), Decision: "accept"}
-	if v.Status == "INVALID" {
-		s.Decision, s.Codes = "dispute", v.Codes
-	}
-	s.Sig, err = pocc.SignDoc(t.Signing, pocc.TagSettlement, s)
-	must(err)
-	must(jsonfile.Write(*out, s))
-	fmt.Fprintf(os.Stderr, "%s written to %s\n", s.Decision, *out)
 }
 
 func image(args []string) {

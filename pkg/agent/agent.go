@@ -1,5 +1,5 @@
 // Package agent is the in-VM side of PoCC (spec 4): it binds the VM to the
-// order at boot, signs a chained heartbeat on every shared slot, and sends a
+// escrow order at boot, signs a chained heartbeat on every shared slot, and sends a
 // final heartbeat at the end of the period or on shutdown.
 package agent
 
@@ -39,12 +39,10 @@ type Agent struct {
 	Request  pocc.Request
 	Binding  pocc.Binding
 	ServerID string
-	// ProviderSealKey, when set, also receives the disclosure seed.
-	ProviderSealKey string
-	Beacon          beacon.Source
-	Counters        Counters
-	Notary          Submitter
-	Logf            func(string, ...any)
+	Beacon   beacon.Source
+	Counters Counters
+	Notary   Submitter
+	Logf     func(string, ...any)
 
 	priv      ed25519.PrivateKey
 	pub       string
@@ -57,7 +55,7 @@ type Agent struct {
 	done      bool
 }
 
-// New prepares an agent for a binding (from an offline Order or an escrow order).
+// New prepares an agent for a binding (from the escrow order and the meter spec).
 func New(req pocc.Request, bind pocc.Binding, serverID string, b beacon.Source, c Counters, n Submitter) (*Agent, error) {
 	if len(bind.H0) != 32 || bind.SlotRounds == 0 {
 		return nil, errors.New("incomplete binding")
@@ -90,11 +88,7 @@ func (a *Agent) Boot(ctx context.Context, r0 uint64) (pocc.BootProof, error) {
 	if _, err := rand.Read(seed); err != nil {
 		return pocc.BootProof{}, err
 	}
-	recipients := []string{a.Request.TenantSealKey}
-	if a.ProviderSealKey != "" {
-		recipients = append(recipients, a.ProviderSealKey)
-	}
-	seedEnc, err := pocc.SealSeed(seed, recipients...)
+	seedEnc, err := pocc.SealSeed(seed, a.Request.TenantSealKey)
 	if err != nil {
 		return pocc.BootProof{}, err
 	}

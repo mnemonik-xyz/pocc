@@ -1,9 +1,11 @@
 # Live test plan: Stage 0 on amnezia.cloud
 
-Status: first run done 2026-10-28, 21:00–22:00 UTC. All six scenarios passed;
-the run found two defects, both fixed. Results and findings:
-[`test/live/2026-10-28/`](../test/live/2026-10-28/README.md).
-Reproduce with [`scripts/live-test.sh`](../scripts/live-test.sh).
+Status: first run done 2026-10-28, 21:00–22:00 UTC, before the escrow binding
+existed. All six scenarios passed; the run found two defects, both fixed. Results and
+findings: [`test/live/2026-10-28/`](../test/live/2026-10-28/README.md); those fixtures
+no longer verify (decision 30). The next run binds the agent to an escrow order and
+produces the fixture for Warrant's DL-7. Reproduce with
+[`scripts/live-test.sh`](../scripts/live-test.sh).
 
 ## Goal
 
@@ -61,25 +63,25 @@ and checked by the verifier.
 |---|---|---|
 | 20:51 | Network, router, notary VM, floating IP | Provider |
 | 20:53 | Tenant signs request (period 21:00–22:00, rule: assurance ≥ L0 and uptime ≥ 95 %) | Tenant |
-| 20:53 | Provider signs order; agent VM created | Provider |
+| 20:53 | Agent VM created, bound to the escrow order | Provider |
 | 20:57 | HTTPS gateway VM | Operator |
 | 21:00 | Agent VM recreated so its log reaches the serial console (needed to read its key) | Provider |
 | 21:02:24 | Agent boots on a slot: boot proof | Agent |
 | 21:03 → 21:59 | Heartbeat every 60 s | Agent |
 | ~21:30 → ~21:40 | **Scenario L3**: provider pauses the agent VM through Nova | Provider |
 | 21:59:24 | Final heartbeat (next slot is past the period end) | Agent |
-| after 22:00 | Receipts, verification, usage records, settlement, then delete everything | Both |
+| after 22:00 | Receipt, verification, usage records, then delete everything | Tenant, provider |
 
 ## Scenarios and expected results
 
 | ID | Scenario | How | Expected |
 |---|---|---|---|
 | L1 | Proof chain on real infrastructure | Boot proof and all heartbeats, real drand, notary anchoring | No `E_BEACON`, `E_CHAIN`, `E_LOG` or `E_BRACKET` |
-| L2 | Provider bills from its own meter | Receipt A: billed seconds = Nova `os-simple-tenant-usage` for the period | `INVALID` with `E_OVERBILL`: Nova counts the build time before boot and the paused time |
+| L2 | Provider bills from its own meter | Compare Nova `os-simple-tenant-usage` for the period (printed by `pocc-broker receipt`) with the credited seconds | Nova's figure is higher: it counts the build time before boot and the paused time. A note for that amount fails Warrant gate D5 |
 | L3 | Provider stops delivery | Nova `pause` for about 10 minutes mid-period | One gap; the gap and the interval across it earn nothing. Late heartbeats, if any, earn nothing either |
-| L4 | Honest billing | Receipt B: billed seconds = credited seconds | `VALID_WITH_GAPS`, one signed usage record for 21:00–22:00 |
-| L5 | Policy decides payment | Rule dry run on the usage record | `Deny`: uptime about 7,700 bp is below the 9,500 bp the tenant required |
-| L6 | Settlement | `pocc-broker settle` | Receipt B: `accept`. Receipt A: would be `dispute` with `E_OVERBILL` |
+| L4 | Usage records | `pocc-verify -warrant-records` | `VALID_WITH_GAPS`; one PoCC-native and one Warrant-shaped record for 21:00–22:00, `lease_id` and `meter_spec` equal to the policy's |
+| L5 | Policy decides payment | Floor check printed by `pocc-verify` (D6, D7) | Denied: uptime about 7,700 bp is below the 9,500 bp the tenant required |
+| L6 | Binding | The receipt verified against another escrow order id | `INVALID` with `E_BIND` |
 
 Credit arithmetic for the expected values, with boot at 21:02:24, the final
 heartbeat at 21:59:24 and a pause covering k missed slots:
@@ -97,7 +99,8 @@ For k = 10: 2,760 s credited and 7,666 bp.
 export OS_AUTH_URL=... OS_USERNAME=... OS_PASSWORD=... OS_PROJECT_ID=... \
        OS_USER_DOMAIN_NAME=Default OS_REGION_NAME=eu-ams-1
 export PERIOD_START=2026-11-02T10:00:00Z PERIOD_END=2026-11-02T11:00:00Z
-scripts/live-test.sh up order agent       # at least 5 minutes before PERIOD_START
+# escrow order: ESCROW_CHAIN_ID ESCROW_ADDR ESCROW_ORDER_ID POLICY_HASH (dev placeholders until PE-2)
+scripts/live-test.sh up request agent     # at least 5 minutes before PERIOD_START
 scripts/live-test.sh status               # any time
 scripts/live-test.sh pause                # optional, scenario L3
 scripts/live-test.sh resume
