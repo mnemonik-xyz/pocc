@@ -114,9 +114,10 @@ co-signing (both online every hour, no gain over the buyer alone), or the zkVM g
 (`computed_result`, the end state X-1). A malicious buyer can only under-credit: sign
 records for fewer seconds than the receipt proves, or sign nothing. It cannot
 over-credit without paying itself, cannot move funds, and cannot forge the provider's
-evidence. The provider's exposure is one hour, because it challenges for hour k before
-serving hour k+1 and stops when a record or note is missing; and anyone can re-run
-`pocc verify` on the public evidence and show the under-credit.
+evidence. The provider's exposure is one hour, because it challenges for hour k after
+hour k ran, serves hour k+1 against note k, and stops when note k is missing by the end
+of hour k+1 (lease evidence SS-9); and anyone can re-run `pocc verify` on the public
+evidence and show the under-credit.
 
 ## 4. The rent policy
 
@@ -325,8 +326,13 @@ gate, as acceptance ME-1 requires):
 | D3 | Each record's `scope` and `lease_id` equal the policy's; `meter_spec` equals `delivery.meter_spec` | `Deny` |
 | D4 | Each record's window lies inside the policy's validity, and `window_end - window_start` is one hour | `Deny` |
 | D5 | For each note k: `amount_k ≤ units_k × price_per_unit + tolerance` | `Deny` |
-| D6 | `units_k × 10000 / (window_end - window_start) ≥ min_uptime_bp` | `Deny` |
-| D7 | `assurance ≥ min_assurance` | `Deny` |
+| D6 | If `units_k × 10000 / (window_end - window_start) < min_uptime_bp`, then `amount_k = 0` | `Deny` |
+| D7 | If `assurance < min_assurance`, then `amount_k = 0` | `Deny` |
+
+An hour below the floors is not skipped (decision 31). The guardrail signs its usage
+record and a note for amount 0, so note indices stay consecutive and the batch settles
+with that hour unpaid. A guardrail that signs nothing is non-cooperation: the provider
+stops after one more hour and settles the notes that exist as a partial batch.
 
 Then the rule tree runs on the existing facts. The journal is the invoice layout plus
 the two delivery words: `deliverySpecHash` and
@@ -553,5 +559,6 @@ cost, are in `docs/decisions.md` (entries 15–25).
 - [x] PoCC core stays consumer-agnostic; Warrant code in `pkg/adapter/warrant` (24).
 - [x] One guardrail key for the registry, acceptance and meter roles in v1 (25).
 - [x] One mode, escrow only: the policy decides the proof; `meter_spec` mandatory; the PoCC Order and the offline path removed (30, 2 Nov).
+- [x] Challenge after the hour; an hour below the floors gets a zero note, never a gap in the batch (31, 2 Nov).
 
 Phase B on the PoCC side is implemented (PC-1, PC-2: commit after this one). Phase A is open for review: PE-1 is policy-execution [#76](https://github.com/mnemonik-xyz/policy-execution/pull/76), W-1 is warrant [#16](https://github.com/mnemonik-xyz/warrant/pull/16). Both are drafts; the owner merges.

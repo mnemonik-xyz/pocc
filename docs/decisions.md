@@ -54,6 +54,7 @@ handoff (`docs/handoff/`).
 | 28 | 2026-10-29 | A credited interval belongs to the hour it ends in; one ending exactly on the hour belongs to the hour before | Taken, not yet reviewed by the owner | Verifier | Changes which hour edge intervals credit, not the total |
 | 29 | 2026-10-29 | In escrow mode the receipt's billed fields and signature are optional; billing is through the consumer's notes | Taken, not yet reviewed by the owner | Verifier | Make them mandatory again |
 | 30 | 2026-11-02 | One mode, escrow only: the proof of delivery is whatever the executed policy says; PoCC is one delivery kind (`signed_usage`); `meter_spec` mandatory in the Request; the PoCC `Order` type and the offline path removed. Amends the last clause of 23 | Taken | Verifier, agent, broker, sim, `docs/architecture.md` | Reinstate the `Order` type and the offline branch; old fixtures verify again |
+| 31 | 2026-11-02 | Challenge after the hour (SS-9); an hour below the floors gets a usage record and a zero note, so batches stay contiguous (D6, D7 bound the amount instead of denying) | Taken | Lease evidence §5a, §6; integration §6 | Allow gaps in batches: `authorize_meter` and the proved evaluator change |
 
 ## Decisions in full
 
@@ -203,3 +204,14 @@ Request; the `Order` type, the `-order` path and the verifier's offline branch a
 removed; decision 29 stops being a special case (the bill is always Warrant notes). The
 `test/live/2026-10-28` fixtures stay as history and no longer verify. *Reversal:*
 reinstate the `Order` type and the branch.
+
+**31 Challenge after, zero notes below the floors.** *Found by:* a review of the lease
+spec on 2 Nov: SS-1 and SS-3 serve only against a note, but a usage record exists only
+after the hour ran; and D1's no-gap rule meant a denied hour blocked the rest of its
+batch. *Alternatives:* allow gaps in batches (changes `authorize_meter` and the proved
+evaluator); assign note indices only to paid hours (gives up one piece = one clock
+hour). *Outcome:* SS-9 fixes the order for `signed_usage` (challenge after piece k,
+serve piece k+1 against note k, stop when note k is missing); D6 and D7 require
+`amount_k = 0` below the floors instead of denying, and the guardrail signs the zero
+note. A zero-amount accepted note is already a legal note, so nothing proved changes.
+*Reversal:* either alternative.
