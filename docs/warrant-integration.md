@@ -362,7 +362,7 @@ gate, as acceptance ME-1 requires):
 | D1 | One record for every note index in the batch, `first_index = last_index = k`, no gap, no overlap | `Ask` (missing), `Deny` (overlap or range) |
 | D2 | Each record's signature verifies under `delivery.meter_key` | `Deny` |
 | D3 | Each record's `scope` and `lease_id` equal the policy's; `meter_spec` equals `delivery.meter_spec` | `Deny` |
-| D4 | Each record's window is `[service_start + k × piece_s, service_start + (k+1) × piece_s)` and lies inside the policy's validity | `Deny` |
+| D4 | Each record's window is `[service_start + k × piece_s, service_start + (k+1) × piece_s)`, lies inside the policy's validity, and ends at or before `service_end` (equivalently `k < pieces`; the validity runs on through the settlement grace) | `Deny` |
 | D5 | For each note k: `amount_k ≤ units_k × price_per_unit + tolerance`, and `note.deliverable_hash = hash(record_k)` | `Deny` |
 | D6 | If `units_k × 10000 < min_coverage_bp × creditable_k`, then `amount_k = 0` | `Deny` |
 | D7 | If `assurance_k < min_assurance`, then `amount_k = 0` | `Deny` |

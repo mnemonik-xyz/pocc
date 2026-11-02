@@ -46,10 +46,13 @@ the guest, and the index check in particular is wrong here: indices are lease-wi
 ## 4. Byte formats (exact)
 
 ```text
-tagged_bytes(tag, payload) = u64_le(len(tag)) ‖ tag ‖ u64_le(len(payload)) ‖ payload
+frame(tag, bytes) = u64_le(len(tag)) ‖ tag ‖ u64_le(len(bytes)) ‖ bytes
 
-record blob : tagged_bytes("warrant/usage/v1",      bincode(UsageRecord))   tag length 16
-note blob   : tagged_bytes("warrant/acceptance/v1", bincode(Note))          tag length 21
+record blob : tagged_bytes("warrant/usage/v1", &record)       tag length 16
+note blob   : tagged_bytes("warrant/acceptance/v1", &note)    tag length 21
+              (core's helpers take the typed value and bincode-encode it once;
+               the result equals frame(tag, bincode(value)); never pass
+               already-encoded bytes to tagged_bytes)
 signature   : r (32) ‖ s (32) ‖ v (1), v ∈ {27, 28}, s ≤ n/2
 digest      : sha256(blob)          (the precompile at 0x02; not keccak)
 signer      : ecrecover(digest, v, r, s)
@@ -60,7 +63,8 @@ facts       = u32_le(n) ‖ for k in 0..n: u32_le(len(rblob_k)) ‖ rblob_k ‖ 
 
 body        = u32_le(n) ‖ for k: u32_le(len(rblob_k)) ‖ rblob_k
             ‖ u32_le(m) ‖ for k: u32_le(len(nblob_k)) ‖ nblob_k
-factsHash   = sha256( u64_le(22) ‖ "warrant/facts-batch/v1" ‖ u64_le(len(body)) ‖ body )
+factsHash   = sha256( frame("warrant/facts-batch/v1", body) )
+            = sha256( u64_le(22) ‖ "warrant/facts-batch/v1" ‖ u64_le(len(body)) ‖ body )
 
 address(key) = last20(keccak256(X_be32 ‖ Y_be32)), from the compressed SEC1 key,
                without the 0x04 prefix (Geth PubkeyToAddress)

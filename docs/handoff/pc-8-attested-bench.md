@@ -92,7 +92,9 @@ checks in the loop. It additionally computes:
    ```
 
    `n` is the number of records, `m` the number of notes, both in input order. The outer
-   framing is the same as `tagged_bytes` but over raw bytes, not bincode.
+   framing is the same as `tagged_bytes` but over raw bytes, not bincode: write it by hand,
+   do not call `tagged_bytes(tag, &body)`, which would bincode-encode `body` (a `Vec<u8>`)
+   and add a length prefix.
 
 The guest commits, in all modes, `(total: u64, records_commit: Hash, facts_hash: Hash,
 meter_addr: [u8; 20], acceptance_addr: [u8; 20])`. In the two signed modes, also compute
