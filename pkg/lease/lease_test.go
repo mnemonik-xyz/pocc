@@ -63,7 +63,7 @@ func TestCooperativeLease(t *testing.T) {
 	must(t, l.Accept(start-600))
 	must(t, l.Boot(start-120))
 	for k := uint32(0); k < 3; k++ {
-		must(t, l.PieceEnd(k, p.End(k)))
+		must(t, l.PieceEnd(k, cap, p.End(k)))
 		check(t, l)
 		answer(t, l, k, cap, p.End(k)+30)
 	}
@@ -87,7 +87,7 @@ func TestNoResponseToFirstChallenge(t *testing.T) {
 	l, _ := New(p)
 	must(t, l.Accept(start-600))
 	must(t, l.Boot(start-120))
-	must(t, l.PieceEnd(0, p.End(0)))
+	must(t, l.PieceEnd(0, cap, p.End(0)))
 	check(t, l)
 	if l.Ledger.Open != 2*cap { // piece 0 challenged, piece 1 provisional
 		t.Fatalf("open %d, want two pieces", l.Ledger.Open)
@@ -106,8 +106,8 @@ func TestNoResponseToFirstChallenge(t *testing.T) {
 	if l.Ledger.Lost != 2*cap {
 		t.Fatalf("lost %d", l.Ledger.Lost)
 	}
-	if e := p.Exposure(0); e != cap+price*uint64(timeout+60) {
-		t.Fatalf("E = %d", e)
+	if e, err := p.Exposure(0); err != nil || e != cap+price*uint64(timeout+60) {
+		t.Fatalf("E = %d, %v", e, err)
 	}
 	if err := l.Note(0, cap, p.Deadline(0), p.End(0)+timeout+1); err == nil {
 		t.Fatal("a note after the deadline was accepted")
@@ -121,7 +121,7 @@ func TestOneHourFundedLease(t *testing.T) {
 	l, _ := New(p)
 	must(t, l.Accept(start-600))
 	must(t, l.Boot(start-120))
-	must(t, l.PieceEnd(0, p.End(0)))
+	must(t, l.PieceEnd(0, cap, p.End(0)))
 	check(t, l)
 	if l.State != Stopping || !strings.HasPrefix(l.Stopped, "SS-10: ceiling") || l.Pieces[1] != Unserved {
 		t.Fatalf("state %s (%s), piece 1 %d\n%s", l.State, l.Stopped, l.Pieces[1], dump(l))
@@ -144,10 +144,10 @@ func TestLateResponseAfterBatchClosed(t *testing.T) {
 	l, _ := New(p)
 	must(t, l.Accept(start-600))
 	must(t, l.Boot(start-120))
-	must(t, l.PieceEnd(0, p.End(0)))
+	must(t, l.PieceEnd(0, cap, p.End(0)))
 	answer(t, l, 0, cap, p.End(0)+30)
-	must(t, l.PieceEnd(1, p.End(1))) // service end: stopping, final challenge 1
-	l.Tick(p.End(1) + timeout)       // buyer silent: batch 0 closes with note 0
+	must(t, l.PieceEnd(1, cap, p.End(1))) // service end: stopping, final challenge 1
+	l.Tick(p.End(1) + timeout)            // buyer silent: batch 0 closes with note 0
 	check(t, l)
 	if l.State != Stopped || !l.Batches[0].Closed || len(l.Batches[0].Notes) != 1 {
 		t.Fatalf("state %s batch %+v\n%s", l.State, l.Batches[0], dump(l))
@@ -170,7 +170,7 @@ func TestExpiringNoteRefused(t *testing.T) {
 	l, _ := New(p)
 	must(t, l.Accept(start-600))
 	must(t, l.Boot(start-120))
-	must(t, l.PieceEnd(0, p.End(0)))
+	must(t, l.PieceEnd(0, cap, p.End(0)))
 	err := l.Note(0, cap, p.End(0)+timeout, p.End(0)+30)
 	if err == nil || !strings.Contains(err.Error(), "BG-6") {
 		t.Fatalf("short window: %v", err)
@@ -185,11 +185,11 @@ func TestZeroNoteMiddlePiece(t *testing.T) {
 	l, _ := New(p)
 	must(t, l.Accept(start-600))
 	must(t, l.Boot(start-120))
-	must(t, l.PieceEnd(0, p.End(0)))
+	must(t, l.PieceEnd(0, cap, p.End(0)))
 	answer(t, l, 0, cap, p.End(0)+30)
-	must(t, l.PieceEnd(1, p.End(1)))
-	answer(t, l, 1, 0, p.End(1)+30) // the record shows an outage: zero note
-	must(t, l.PieceEnd(2, p.End(2)))
+	must(t, l.PieceEnd(1, 0, p.End(1))) // the seller's own verifier saw the outage
+	answer(t, l, 1, 0, p.End(1)+30)     // the record shows it too: zero note, lease continues
+	must(t, l.PieceEnd(2, cap, p.End(2)))
 	answer(t, l, 2, cap, p.End(2)+30)
 	got, err := l.Settle(0, p.End(2)+600, true)
 	must(t, err)
@@ -206,10 +206,10 @@ func TestBuyerDisappearsAfterLastPiece(t *testing.T) {
 	must(t, l.Accept(start-600))
 	must(t, l.Boot(start-120))
 	for k := uint32(0); k < 2; k++ {
-		must(t, l.PieceEnd(k, p.End(k)))
+		must(t, l.PieceEnd(k, cap, p.End(k)))
 		answer(t, l, k, cap, p.End(k)+30)
 	}
-	must(t, l.PieceEnd(2, p.End(2)))
+	must(t, l.PieceEnd(2, cap, p.End(2)))
 	l.Tick(p.End(2) + timeout)
 	check(t, l)
 	got, err := l.Settle(0, p.End(2)+timeout+600, true)
@@ -226,7 +226,7 @@ func TestDuplicateChallenge(t *testing.T) {
 	l, _ := New(p)
 	must(t, l.Accept(start-600))
 	must(t, l.Boot(start-120))
-	must(t, l.PieceEnd(0, p.End(0)))
+	must(t, l.PieceEnd(0, cap, p.End(0)))
 	answer(t, l, 0, cap, p.End(0)+30)
 	must(t, l.Note(0, cap, p.Deadline(0), p.End(0)+60)) // same answer again
 	if err := l.Note(0, cap-1, p.Deadline(0), p.End(0)+70); err == nil {
@@ -244,7 +244,7 @@ func TestProofFailureNearDeadline(t *testing.T) {
 	l, _ := New(p)
 	must(t, l.Accept(start-600))
 	must(t, l.Boot(start-120))
-	must(t, l.PieceEnd(0, p.End(0)))
+	must(t, l.PieceEnd(0, cap, p.End(0)))
 	answer(t, l, 0, cap, p.End(0)+30)
 	if _, err := l.Settle(0, p.Deadline(0)-60, false); err == nil || l.Batches[0].Lost {
 		t.Fatalf("prover failure: %v, lost %v", err, l.Batches[0].Lost)
@@ -258,7 +258,7 @@ func TestProofFailureNearDeadline(t *testing.T) {
 	l2, _ := New(p)
 	must(t, l2.Accept(start-600))
 	must(t, l2.Boot(start-120))
-	must(t, l2.PieceEnd(0, p.End(0)))
+	must(t, l2.PieceEnd(0, cap, p.End(0)))
 	answer(t, l2, 0, cap, p.End(0)+30)
 	if _, err := l2.Settle(0, p.Deadline(0)+1, true); err == nil || !l2.Batches[0].Lost || l2.Ledger.Lost != cap {
 		t.Fatalf("past the deadline: %v, ledger %+v", err, l2.Ledger)
@@ -294,7 +294,7 @@ func TestExposureBound(t *testing.T) {
 	must(t, l.Accept(start-600))
 	must(t, l.Boot(start-120))
 	for k := uint32(0); k < 5; k++ {
-		must(t, l.PieceEnd(k, p.End(k)))
+		must(t, l.PieceEnd(k, cap, p.End(k)))
 		check(t, l)
 		if l.Ledger.Open > 2*cap {
 			t.Fatalf("piece %d: %d open", k, l.Ledger.Open)
@@ -318,5 +318,58 @@ func TestSettleByTooEarly(t *testing.T) {
 	p.SettleBy = p.Deadline(0) - 1
 	if _, err := New(p); err == nil {
 		t.Fatal("accepted an order that cannot settle")
+	}
+}
+
+// Finding 6 of the 2 Nov audit: a zero note for a delivered piece is an
+// underpayment, not an outage. The seller keeps the note and stops after that
+// piece; three zero notes for outages the seller saw itself do not stop it.
+func TestUnderpaymentStops(t *testing.T) {
+	p := params(4, 4, 4*cap)
+	l, _ := New(p)
+	must(t, l.Accept(start-600))
+	must(t, l.Boot(start-120))
+	must(t, l.PieceEnd(0, cap, p.End(0)))
+	answer(t, l, 0, cap, p.End(0)+30)
+	must(t, l.PieceEnd(1, cap, p.End(1))) // the seller's verifier credited the full hour
+	answer(t, l, 1, 0, p.End(1)+30)       // the buyer signs zero: underpayment
+	// Piece 1 already has its note, so nothing is open: the lease stops at once.
+	if len(l.Underpaid) != 1 || l.Underpaid[0] != 1 || l.Pieces[2] != Unserved {
+		t.Fatalf("underpaid %v piece 2 %d\n%s", l.Underpaid, l.Pieces[2], dump(l))
+	}
+	check(t, l)
+	if l.State != Stopped || l.Ledger.Held != cap || l.Ledger.Lost != cap || !l.Batches[0].Closed {
+		t.Fatalf("state %s ledger %+v\n%s", l.State, l.Ledger, dump(l))
+	}
+
+	l2, _ := New(p)
+	must(t, l2.Accept(start-600))
+	must(t, l2.Boot(start-120))
+	for k := uint32(0); k < 3; k++ {
+		must(t, l2.PieceEnd(k, 0, p.End(k))) // three outages the seller saw
+		answer(t, l2, k, 0, p.End(k)+30)
+	}
+	if l2.State != Running || len(l2.Underpaid) != 0 {
+		t.Fatalf("outage zero notes stopped the lease: %s", l2.State)
+	}
+}
+
+// Finding 5: extreme parameters are refused, and the arithmetic is checked.
+func TestBoundedParameters(t *testing.T) {
+	p := params(2, 2, 2*cap)
+	p.MaxNote, p.Ceiling = uint64(1)<<63, ^uint64(0)
+	if _, err := New(p); err == nil {
+		t.Fatal("accepted amounts that overflow")
+	}
+	p = params(2, 2, 2*cap)
+	p.MaxNote = 3600*1100 + 1 // not divisible by the piece: E rounds up
+	e, err := p.Exposure(0)
+	must(t, err)
+	if e <= p.MaxNote+1100*uint64(timeout+60) {
+		t.Fatalf("E = %d did not round up", e)
+	}
+	p.ChallengeTimeoutS = hour
+	if _, err := New(p); err == nil {
+		t.Fatal("accepted a grace longer than a piece")
 	}
 }

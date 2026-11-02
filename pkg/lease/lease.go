@@ -9,7 +9,22 @@ package lease
 import (
 	"errors"
 	"fmt"
+	"math/bits"
 )
+
+// MaxAmount bounds every token amount the model accepts (2^62), so that the
+// sums of at most a few thousand of them never wrap a uint64 (finding 5 of
+// the 2 Nov audit). A policy above it is refused by Check.
+const MaxAmount = uint64(1) << 62
+
+// add is checked addition on amounts.
+func add(a, b uint64) (uint64, error) {
+	s, c := bits.Add64(a, b, 0)
+	if c != 0 || s > MaxAmount*2 {
+		return 0, fmt.Errorf("amount overflow: %d + %d", a, b)
+	}
+	return s, nil
+}
 
 // Params are the policy and listing values the state machine depends on.
 type Params struct {
@@ -59,6 +74,10 @@ func (p Params) Check() error {
 		return errors.New("service period is not a whole number of pieces")
 	case p.BatchSize == 0 || p.MaxNote == 0 || p.Ceiling < p.MaxNote:
 		return errors.New("batch size, max_note or ceiling")
+	case p.MaxNote > MaxAmount || p.Ceiling > MaxAmount:
+		return fmt.Errorf("max_note or ceiling above %d", MaxAmount)
+	case p.ChallengeTimeoutS+p.ShutdownLatencyS > p.PieceS:
+		return errors.New("grace plus shutdown longer than a piece")
 	case p.ChallengeTimeoutS <= 0 || p.SettlementMarginS <= 0:
 		return errors.New("challenge timeout or settlement margin missing")
 	case p.SettleBy < p.Deadline(p.Batch(p.Pieces()-1)):
@@ -68,10 +87,20 @@ func (p Params) Check() error {
 }
 
 // Exposure is E: one piece at the cap, the grace and the shutdown at the piece
-// price, and provisioning. priceS is the price of one second at the cap.
-func (p Params) Exposure(provisioning uint64) uint64 {
-	perSecond := p.MaxNote / uint64(p.PieceS)
-	return p.MaxNote + perSecond*uint64(p.ChallengeTimeoutS+p.ShutdownLatencyS) + provisioning
+// price, and provisioning. The price of the grace is max_note x seconds /
+// piece_s rounded up, so E is a bound, never an underestimate; the arithmetic
+// is exact (128-bit intermediate) and the result is checked.
+func (p Params) Exposure(provisioning uint64) (uint64, error) {
+	hi, lo := bits.Mul64(p.MaxNote, uint64(p.ChallengeTimeoutS+p.ShutdownLatencyS))
+	q, r := bits.Div64(hi, lo, uint64(p.PieceS))
+	if r != 0 {
+		q++
+	}
+	e, err := add(p.MaxNote, q)
+	if err != nil {
+		return 0, err
+	}
+	return add(e, provisioning)
 }
 
 // State of the lease.
@@ -131,6 +160,12 @@ type Lease struct {
 	Ledger  Ledger
 	Stopped string // why
 	Log     []Event
+	// Expected is the seller's own view of what each challenged piece earns;
+	// a note below it is an underpayment for delivered service and stops the
+	// lease after that piece (lease evidence 5a.4). A zero expectation is an
+	// outage the seller's own verifier saw: a zero note is then correct.
+	Expected  []uint64
+	Underpaid []uint32 // pieces whose note was below the seller's expectation
 
 	open      uint32 // index of the open challenge, valid if hasOpen
 	hasOpen   bool
@@ -143,7 +178,8 @@ func New(p Params) (*Lease, error) {
 	if err := p.Check(); err != nil {
 		return nil, err
 	}
-	return &Lease{P: p, Pieces: make([]PieceStatus, p.Pieces()), Batches: map[uint32]*Batch{}}, nil
+	return &Lease{P: p, Pieces: make([]PieceStatus, p.Pieces()), Expected: make([]uint64, p.Pieces()),
+		Batches: map[uint32]*Batch{}}, nil
 }
 
 func (l *Lease) log(at int64, f string, a ...any) {
@@ -160,8 +196,16 @@ func (l *Lease) batch(b uint32) *Batch {
 // reserve makes the SS-10 check for piece k and moves max_note into open.
 func (l *Lease) reserve(k uint32, now int64) error {
 	b := l.P.Batch(k)
+	committed, err := l.committed()
+	if err != nil {
+		return err
+	}
+	next, err := add(committed, l.P.MaxNote)
+	if err != nil {
+		return err
+	}
 	switch {
-	case l.Ledger.Settled+l.Ledger.Held+l.Ledger.Open+l.P.MaxNote > l.P.Ceiling:
+	case next > l.P.Ceiling:
 		return fmt.Errorf("SS-10: ceiling: settled %d + held %d + open %d + %d > %d",
 			l.Ledger.Settled, l.Ledger.Held, l.Ledger.Open, l.P.MaxNote, l.P.Ceiling)
 	case l.P.End(k)+l.P.Grace() > l.P.Deadline(b) || l.P.End(k)+l.P.Grace() > l.P.SettleBy:
@@ -173,6 +217,15 @@ func (l *Lease) reserve(k uint32, now int64) error {
 	l.Pieces[k] = Provisional
 	l.log(now, "piece %d provisional: %d reserved", k, l.P.MaxNote)
 	return nil
+}
+
+// committed is settled + held + open with checked arithmetic.
+func (l *Lease) committed() (uint64, error) {
+	s, err := add(l.Ledger.Settled, l.Ledger.Held)
+	if err != nil {
+		return 0, err
+	}
+	return add(s, l.Ledger.Open)
 }
 
 // Accept moves Offered -> Provisioning and reserves piece 0.
@@ -205,17 +258,23 @@ func (l *Lease) Boot(now int64) error {
 }
 
 // PieceEnd is called when piece k ends (at End(k)). It sends the challenge for
-// note k and makes piece k+1 provisional, or stops at the end of the service.
-func (l *Lease) PieceEnd(k uint32, now int64) error {
+// note k, carrying the amount the seller's own run of the verifier expects
+// for the piece (units x price of the record it sends with the challenge), and
+// makes piece k+1 provisional, or stops at the end of the service.
+func (l *Lease) PieceEnd(k uint32, expected uint64, now int64) error {
 	if l.State != Running || l.Pieces[k] != Served || k != l.lastServe {
 		return fmt.Errorf("piece %d end in state %s, status %d", k, l.State, l.Pieces[k])
 	}
 	if l.hasOpen {
 		return fmt.Errorf("challenge %d still open at the end of piece %d", l.open, k)
 	}
+	if expected > l.P.MaxNote {
+		return fmt.Errorf("expected %d above max_note", expected)
+	}
 	l.Pieces[k] = Challenged
+	l.Expected[k] = expected
 	l.open, l.hasOpen, l.deadline = k, true, l.P.End(k)+l.P.ChallengeTimeoutS
-	l.log(now, "challenge %d sent; deadline %d", k, l.deadline)
+	l.log(now, "challenge %d sent, expecting %d; deadline %d", k, expected, l.deadline)
 	if k+1 >= l.P.Pieces() {
 		l.State = Stopping
 		l.Stopped = "service_end"
@@ -260,9 +319,26 @@ func (l *Lease) Note(k uint32, amount uint64, validUntil, now int64) error {
 	l.Pieces[k] = Acknowledged
 	l.batch(b).Notes[k] = amount
 	l.Ledger.Open -= l.P.MaxNote
-	l.Ledger.Held += amount
+	held, err := add(l.Ledger.Held, amount)
+	if err != nil {
+		return err
+	}
+	l.Ledger.Held = held
 	l.hasOpen = false
 	l.log(now, "note %d acknowledged: %d held", k, amount)
+	if amount < l.Expected[k] {
+		// The buyer paid less than the evidence shows: the note is still
+		// money and is kept, but the service stops after this piece.
+		l.Underpaid = append(l.Underpaid, k)
+		l.log(now, "note %d below the expected %d: underpayment", k, l.Expected[k])
+		l.closeFull(b, now)
+		if l.State == Running {
+			l.stop(now, fmt.Sprintf("underpayment on piece %d", k))
+		} else {
+			l.nextFinal(now)
+		}
+		return nil
+	}
 	if l.State == Running && l.Pieces[k+1] == Provisional {
 		// The gate for piece k+1 passed: provisional becomes served.
 		l.Pieces[k+1] = Served
@@ -374,7 +450,10 @@ func (l *Lease) Settle(b uint32, now int64, proverOK bool) (uint64, error) {
 	}
 	var sum uint64
 	for _, a := range bt.Notes {
-		sum += a
+		var err error
+		if sum, err = add(sum, a); err != nil {
+			return 0, err
+		}
 	}
 	if now > l.P.Deadline(b) || now > l.P.SettleBy {
 		bt.Lost = true
@@ -396,7 +475,11 @@ func (l *Lease) Settle(b uint32, now int64, proverOK bool) (uint64, error) {
 
 // Invariant checks the ledger against the ceiling and the piece statuses.
 func (l *Lease) Invariant() error {
-	if l.Ledger.Settled+l.Ledger.Held+l.Ledger.Open > l.P.Ceiling {
+	committed, err := l.committed()
+	if err != nil {
+		return err
+	}
+	if committed > l.P.Ceiling {
 		return fmt.Errorf("ledger above the ceiling: %+v", l.Ledger)
 	}
 	var open uint64

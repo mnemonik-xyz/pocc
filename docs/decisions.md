@@ -65,6 +65,7 @@ handoff (`docs/handoff/`).
 | 39 | 2026-11-02 | Gates D4 to D9 have a Go reference (`warrant.Decide`) and shared decision vectors (`test/vectors/usage-gates.json`) that Warrant's `authorize_meter` must match | Taken | `pkg/adapter/warrant`, DL-12 | None |
 | 40 | 2026-11-02 | The rent case settles through the framework interface (C): journal v2 with `schemaId` on `WarrantEscrow`, proof only; PE-0 (`policy-execution/docs/handoff/04-rent-interface-v1.md`) is its specification. Interface A (invoice journal as-is) is superseded; B (invoice journal plus delivery words on `ProofInvoiceEscrow`) is not for production and is not implemented | Chosen by the owner; PE-0's text awaits review | Lease evidence §5, integration §7, §10 | Implement B as a pilot bridge, thrown away at C |
 | 41 | 2026-11-02 | The state machine of lease evidence 5a.5 is modelled in `pkg/lease` and the DL-11 scenarios run as tests; the model found that a full batch must settle before its own `deadline(b)`, not at the lease's end, so the worker settles each batch as it closes | Taken | `pkg/lease`, SS-4 | None |
+| 42 | 2026-11-02 | The seller's challenge carries the amount its own verifier expects; a note below it is underpayment for delivered service and stops the lease after that piece, while a zero note for an outage the seller saw itself continues. Amounts are bounded (2^62) and every sum is checked | Taken | `pkg/lease`, lease evidence 5a.5 | Leave the gate to PC-3 and let the model continue on any note |
 
 ## Decisions in full
 
@@ -276,3 +277,12 @@ time, batches that close once, `deadline(b)` from the policy. *Found by the mode
 the exposure test first settled every batch at the lease's end and the model refused
 it, because deadline(b) of an early batch passes long before; SS-4's "when full" is
 not optional. *Reversal:* none; the model follows the specification.
+
+**42 The underpayment gate in the model.** *Found by:* the fourth audit round: the
+model accepted zero notes for three delivered pieces and ran on, so it did not show
+the "stops after one piece" behaviour that decision 15 and lease evidence 5a.4 rely
+on. *Outcome:* the seller runs the verifier on the evidence it sends with the challenge
+and expects `units × price`; a note below that is kept (it is money) and the lease
+stops; a zero expectation is an outage and a zero note is correct. Also from that
+round: amounts bounded at 2^62, checked additions, `Exposure` exact and rounded up, a
+grace longer than a piece refused. *Reversal:* per row.
