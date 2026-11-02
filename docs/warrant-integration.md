@@ -575,6 +575,7 @@ widening of the Verus claim, golden vectors changed only on purpose.
 
 | ID | Package | Depends on | Acceptance |
 |---|---|---|---|
+| PE-7 | GPU prover for the rent guest: build the rent guest with RISC Zero's CUDA prover on one GPU host (the canary plan's x86 host with a GPU, or a rented one), prove batches of 1, 6, 24 and 168 hours, record proof time, wrap time, peak memory and the host's price; compare with the CPU extrapolation of `docs/measurements.md` (195 s of proving per hour of service). Proving is the dominant cost (about $1.30 per VM-day on a CPU prover at $1/h); without a GPU result the pilot cannot price VMs below about $10 a day | PE-3 (the rent guest) | DL-13 numbers for a GPU prover; `settlement_margin_s` set from them |
 | X-1 | The PoCC verifier runs inside the rent guest as a `computed_result` delivery check: the guest takes the receipt, re-derives credited seconds, and needs no meter key. The guest cannot fetch anything, so every external input is a witness it authenticates: drand rounds by their BLS signature under the chain's public key (not done today, architecture §8); Arc anchors by a block header chain to a trusted checkpoint the policy names; the Nova record by a provider signature or, in Stage 1, by the attestation report instead. X-1 starts with a written witness design covering these three | PE-5, PC-4; witness design; guest cycle count measured first | Same verdicts as `pocc-verify` on all fixtures; proving time recorded (ME-8) |
 
 ## 11. Sequencing and risks
