@@ -35,6 +35,7 @@ func main() {
 	recordsOut := flag.String("records", "usage-records.json", "where to write PoCC-native usage records")
 	warrantOut := flag.String("warrant-records", "", "write Warrant-shaped usage records here (needs a Warrant policy in the request)")
 	signCmd := flag.String("warrant-sign-cmd", "", "external signer template, e.g. \"warrant-evidence sign-usage {key} {in} {out}\"")
+	signBatchCmd := flag.String("warrant-sign-batch-cmd", "", "external batch signer template, e.g. \"warrant-evidence sign-usage-batch {key} {in} {out}\": one meter signature over the batch (decision 44)")
 	signKey := flag.String("warrant-sign-key", "", "key path substituted for {key}")
 	signDir := flag.String("warrant-sign-dir", "warrant-records", "directory for per-record files when signing")
 	flag.Parse()
@@ -118,6 +119,13 @@ func main() {
 				log.Fatal(err)
 			}
 			fmt.Fprintf(os.Stderr, "%d record(s) signed by the external signer into %s\n", len(signed), *signDir)
+		}
+		if *signBatchCmd != "" {
+			signed, err := warrant.SignBatchExternal(*signDir, *signBatchCmd, *signKey, wr)
+			if err != nil {
+				log.Fatal(err)
+			}
+			fmt.Fprintf(os.Stderr, "batch of %d record(s) signed once: %s\n", len(wr), signed.Signature)
 		}
 	}
 	if v.Status == verify.StatusInvalid {

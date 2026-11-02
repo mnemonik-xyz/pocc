@@ -288,6 +288,39 @@ func SignExternal(dir, cmd, keyPath string, recs []UsageRecord) ([]Signed, error
 	return out, nil
 }
 
+// SignBatchExternal writes the batch's records as one JSON array and runs the
+// external signer once over it: the meter signs
+// tagged_bytes("warrant/usage-batch-signed/v1", records) (PE-0 section 3,
+// decision 44). The guest then verifies one meter signature per batch instead
+// of one per hour; the records themselves are unchanged, so each note still
+// binds to hash(record_k). Falls back to nothing: a batch without this
+// signature settles with the per-hour signatures of SignExternal.
+func SignBatchExternal(dir, cmd, keyPath string, recs []UsageRecord) (Signed, error) {
+	if !strings.Contains(cmd, "{in}") || !strings.Contains(cmd, "{out}") {
+		return Signed{}, errors.New("signer command must contain {in} and {out}")
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return Signed{}, err
+	}
+	if len(recs) == 0 {
+		return Signed{}, errors.New("no records in the batch")
+	}
+	in := filepath.Join(dir, fmt.Sprintf("usage-batch-%d-%d.json", recs[0].FirstIndex, recs[len(recs)-1].LastIndex))
+	sig := in[:len(in)-5] + ".sig.json"
+	b, _ := json.MarshalIndent(recs, "", "  ")
+	if err := os.WriteFile(in, append(b, '\n'), 0o644); err != nil {
+		return Signed{}, err
+	}
+	line := strings.NewReplacer("{key}", keyPath, "{in}", in, "{out}", sig).Replace(cmd)
+	parts := strings.Fields(line)
+	c := exec.Command(parts[0], parts[1:]...)
+	c.Stderr = os.Stderr
+	if err := c.Run(); err != nil {
+		return Signed{}, fmt.Errorf("batch signer: %w", err)
+	}
+	return Signed{Record: in, Signature: sig}, nil
+}
+
 // HexHash formats a hash for the policy's meter_spec field.
 func HexHash(b []byte) string { return hex.EncodeToString(b) }
 

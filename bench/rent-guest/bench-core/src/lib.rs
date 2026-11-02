@@ -29,6 +29,14 @@ pub struct Note {
 pub struct Input {
     pub meter_key: Vec<u8>, pub acceptance_key: Vec<u8>, pub price_per_unit: u64,
     pub records: Vec<(UsageRecord, Vec<u8>)>, pub notes: Vec<(Note, Vec<u8>)>,
+    /// One meter signature over tagged_bytes("warrant/usage-batch-signed/v1",
+    /// records without their signatures). When present, the per-record
+    /// signatures are empty and not checked (decision 44).
+    pub batch_signature: Option<Vec<u8>>,
+}
+
+pub fn batch_message(records: &[UsageRecord]) -> Vec<u8> {
+    tagged_bytes(b"warrant/usage-batch-signed/v1", &records.to_vec())
 }
 
 pub fn tagged_bytes<T: Serialize>(tag: &[u8], value: &T) -> Vec<u8> {
@@ -53,9 +61,13 @@ pub fn check(input: &Input) -> Result<(u64, Hash), &'static str> {
     if input.records.len() != input.notes.len() { return Err("D1: one record per note") }
     let mut total: u64 = 0;
     let mut acc = Sha256::new();
+    if let Some(bsig) = &input.batch_signature {
+        let recs: Vec<UsageRecord> = input.records.iter().map(|(r, _)| r.clone()).collect();
+        if !verify(&input.meter_key, &batch_message(&recs), bsig) { return Err("D2: batch signature") }
+    }
     for ((rec, rsig), (note, nsig)) in input.records.iter().zip(&input.notes) {
         let rmsg = tagged_bytes(b"warrant/usage/v1", rec);
-        if !verify(&input.meter_key, &rmsg, rsig) { return Err("D2: record signature") }
+        if input.batch_signature.is_none() && !verify(&input.meter_key, &rmsg, rsig) { return Err("D2: record signature") }
         let rhash: Hash = Sha256::digest(&rmsg).into();
         let nmsg = tagged_bytes(b"warrant/acceptance/v1", note);
         if !verify(&input.acceptance_key, &nmsg, nsig) { return Err("note signature") }

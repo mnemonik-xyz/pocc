@@ -18,6 +18,21 @@ this repository at the commit that adds this file; `policy-execution` at `5817e3
 | Rent work, 24 hours | 16,196,163 | 17 | 1.36 s |
 | Rent work, 168 hours | 113,305,823 | 116 | 8.07 s |
 
+With one meter signature over the batch (`BATCH_SIG=1`, decision 44): the per-hour
+records are unchanged, their individual signatures are dropped, and the meter signs
+`tagged_bytes("warrant/usage-batch-signed/v1", records)` once.
+
+| Batch | Cycles, per-hour signatures | Cycles, one batch signature | Saving |
+|---|---:|---:|---:|
+| 1 hour | 689,041 | 700,216 | -2 % |
+| 6 hours | 4,063,591 | 2,506,635 | 38 % |
+| 24 hours | 16,196,163 | 9,034,772 | 44 % |
+| 168 hours | 113,305,823 | 61,347,095 | 46 % |
+
+Derived with the batch signature: 363,155 cycles per hour of service (one note
+signature and the hashing) plus about 337,000 fixed for the batch signature; a daily
+batch is 5.7 times the invoice guest instead of 10.3.
+
 Derived: 674,352 cycles per hour of service (two secp256k1 verifications and two
 sha256 of about 200 bytes each), 14,689 cycles of fixed work. The rent work is linear
 in the hours; a 24-hour batch is 10.3 times the invoice guest.
