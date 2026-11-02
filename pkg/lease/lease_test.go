@@ -373,3 +373,44 @@ func TestBoundedParameters(t *testing.T) {
 		t.Fatal("accepted a grace longer than a piece")
 	}
 }
+
+// Fifth audit round: the loss ledger is checked and bounded; a negative
+// shutdown latency is refused and Exposure returns an error, never panics.
+func TestLossLedgerAndNegativeLatency(t *testing.T) {
+	p := params(8, 1, uint64(1)<<62)
+	p.MaxNote = uint64(1) << 61 // eight one-piece batches: 8 x 2^61 = 2^64 would wrap
+	l, _ := New(p)
+	must(t, l.Accept(start-600))
+	must(t, l.Boot(start-120))
+	var lastErr error
+	var served uint32
+	for k := uint32(0); k < 8 && l.State == Running; k++ {
+		// Each piece is answered, each batch closes and is then left to expire.
+		must(t, l.PieceEnd(k, p.MaxNote, p.End(k)))
+		answer(t, l, k, p.MaxNote, p.End(k)+30)
+		_, lastErr = l.Settle(k, p.Deadline(k)+1, true)
+		if lastErr == nil {
+			t.Fatalf("batch %d settled past its deadline", k)
+		}
+		if err := l.Invariant(); err != nil {
+			t.Fatalf("after batch %d: %v", k, err)
+		}
+		served = k + 1
+	}
+	// Four 2^61 batches reach MaxLedger (2^63); the fifth and sixth refuse,
+	// stay Held and unsettled, and the ledger keeps its last good value
+	// instead of wrapping to zero. The unsettled notes then exhaust the
+	// ceiling (SS-10) and the lease stops before piece 6.
+	if l.Ledger.Lost != 4*p.MaxNote || !strings.Contains(lastErr.Error(), "overflow") || l.Ledger.Held != 2*p.MaxNote || served != 6 {
+		t.Fatalf("lost %d held %d served %d, last error %v\n%s", l.Ledger.Lost, l.Ledger.Held, served, lastErr, dump(l))
+	}
+
+	q := params(2, 2, 2*cap)
+	q.ShutdownLatencyS = -q.ChallengeTimeoutS - 1
+	if _, err := New(q); err == nil {
+		t.Fatal("negative shutdown latency accepted")
+	}
+	if _, err := q.Exposure(0); err == nil {
+		t.Fatal("Exposure accepted a negative shutdown latency")
+	}
+}

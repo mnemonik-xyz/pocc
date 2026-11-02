@@ -12,15 +12,20 @@ import (
 	"math/bits"
 )
 
-// MaxAmount bounds every token amount the model accepts (2^62), so that the
-// sums of at most a few thousand of them never wrap a uint64 (finding 5 of
-// the 2 Nov audit). A policy above it is refused by Check.
-const MaxAmount = uint64(1) << 62
+// MaxAmount bounds every token amount a policy may name (2^62) and MaxLedger
+// bounds every ledger category (2^63), so that no sum the model forms can
+// wrap a uint64 (finding 5 of the 2 Nov audit). A policy above MaxAmount is
+// refused by Check; a ledger transition above MaxLedger is refused and
+// logged, and the ledger keeps its last good value.
+const (
+	MaxAmount = uint64(1) << 62
+	MaxLedger = uint64(1) << 63
+)
 
 // add is checked addition on amounts.
 func add(a, b uint64) (uint64, error) {
 	s, c := bits.Add64(a, b, 0)
-	if c != 0 || s > MaxAmount*2 {
+	if c != 0 || s > MaxLedger {
 		return 0, fmt.Errorf("amount overflow: %d + %d", a, b)
 	}
 	return s, nil
@@ -78,8 +83,10 @@ func (p Params) Check() error {
 		return fmt.Errorf("max_note or ceiling above %d", MaxAmount)
 	case p.ChallengeTimeoutS+p.ShutdownLatencyS > p.PieceS:
 		return errors.New("grace plus shutdown longer than a piece")
-	case p.ChallengeTimeoutS <= 0 || p.SettlementMarginS <= 0:
-		return errors.New("challenge timeout or settlement margin missing")
+	case p.ChallengeTimeoutS <= 0 || p.SettlementMarginS <= 0 || p.ShutdownLatencyS < 0:
+		return errors.New("challenge timeout or settlement margin missing, or negative shutdown latency")
+	case p.ChallengeTimeoutS > p.PieceS || p.ShutdownLatencyS > p.PieceS || p.SettlementMarginS > 1<<40:
+		return errors.New("timeout, shutdown latency or margin out of range")
 	case p.SettleBy < p.Deadline(p.Batch(p.Pieces()-1)):
 		return fmt.Errorf("settleBy %d before deadline(last batch) %d", p.SettleBy, p.Deadline(p.Batch(p.Pieces()-1)))
 	}
@@ -91,7 +98,14 @@ func (p Params) Check() error {
 // piece_s rounded up, so E is a bound, never an underestimate; the arithmetic
 // is exact (128-bit intermediate) and the result is checked.
 func (p Params) Exposure(provisioning uint64) (uint64, error) {
-	hi, lo := bits.Mul64(p.MaxNote, uint64(p.ChallengeTimeoutS+p.ShutdownLatencyS))
+	if err := p.Check(); err != nil {
+		return 0, err
+	}
+	grace := p.ChallengeTimeoutS + p.ShutdownLatencyS // both non-negative and at most piece_s each
+	hi, lo := bits.Mul64(p.MaxNote, uint64(grace))
+	if hi >= uint64(p.PieceS) {
+		return 0, errors.New("exposure overflow")
+	}
 	q, r := bits.Div64(hi, lo, uint64(p.PieceS))
 	if r != 0 {
 		q++
@@ -132,9 +146,22 @@ const (
 
 // Ledger is the reservation ledger of SS-10. Each reservation moves exactly
 // once: open -> held (note acknowledged) or open -> lost (timed out), and
-// held -> settled (batch consumed) or held -> lost (batch lost).
+// held -> settled (batch consumed) or held -> lost (batch lost). Every
+// transition is a checked addition; Lost is bounded like the rest, and a
+// transition that would exceed the bound is refused and logged, never wrapped.
 type Ledger struct {
 	Settled, Held, Open, Lost uint64
+}
+
+// lose moves amount into Lost with checked arithmetic.
+func (l *Lease) lose(amount uint64, now int64, why string) error {
+	lost, err := add(l.Ledger.Lost, amount)
+	if err != nil {
+		l.log(now, "loss ledger overflow on %s: %v", why, err)
+		return err
+	}
+	l.Ledger.Lost = lost
+	return nil
 }
 
 // Batch is one obligation's worth of pieces.
@@ -376,7 +403,7 @@ func (l *Lease) Tick(now int64) {
 	l.hasOpen = false
 	l.Pieces[k] = TimedOut
 	l.Ledger.Open -= l.P.MaxNote
-	l.Ledger.Lost += l.P.MaxNote
+	_ = l.lose(l.P.MaxNote, now, "timeout")
 	l.log(now, "challenge %d timed out: piece %d unpaid", k, k)
 	if l.State == Running {
 		l.stop(now, fmt.Sprintf("note %d missing", k))
@@ -401,7 +428,7 @@ func (l *Lease) stop(now int64, why string) {
 		if l.Pieces[k] == Provisional {
 			l.Pieces[k] = Unserved
 			l.Ledger.Open -= l.P.MaxNote
-			l.Ledger.Lost += l.P.MaxNote
+			_ = l.lose(l.P.MaxNote, now, "provisional piece")
 			l.log(now, "provisional piece %d: unpaid, reservation lost", k)
 		}
 	}
@@ -456,9 +483,11 @@ func (l *Lease) Settle(b uint32, now int64, proverOK bool) (uint64, error) {
 		}
 	}
 	if now > l.P.Deadline(b) || now > l.P.SettleBy {
+		if err := l.lose(sum, now, "lost batch"); err != nil {
+			return 0, err // the batch stays Held and unsettled: the state is not corrupted
+		}
 		bt.Lost = true
 		l.Ledger.Held -= sum
-		l.Ledger.Lost += sum
 		l.log(now, "batch %d lost: past deadline %d", b, l.P.Deadline(b))
 		return 0, fmt.Errorf("batch %d past its deadline", b)
 	}
@@ -481,6 +510,9 @@ func (l *Lease) Invariant() error {
 	}
 	if committed > l.P.Ceiling {
 		return fmt.Errorf("ledger above the ceiling: %+v", l.Ledger)
+	}
+	if l.Ledger.Lost > MaxLedger {
+		return fmt.Errorf("loss ledger above its bound: %+v", l.Ledger)
 	}
 	var open uint64
 	for _, s := range l.Pieces {
