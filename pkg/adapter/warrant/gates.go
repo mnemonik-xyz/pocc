@@ -6,11 +6,15 @@ import (
 	"math/bits"
 )
 
-// Decide is the reference implementation of gates D4 to D9 for one record and
-// its note (lease evidence 5a.3). Warrant's guest implements the same gates
-// in Rust; test/vectors/usage-gates.json holds cases both must agree on.
-// D1 to D3 (batch shape, signature, scope) need the batch and the key and are
-// not decided here. It returns nil when the note may settle.
+// Decide is the Go reference for the per-record parts of gates D1 and D4 to
+// D9 (lease evidence 5a.3), for one record and the amount of its note. It is
+// not the whole delivery check: D1's batch shape, D2 (signature under
+// meter_key), D3 (scope, lease and meter_spec equality) and D5's binding
+// note.deliverable_hash == hash(record) need the batch, the key and Warrant's
+// own encodings, and are Warrant's to decide; PoCC never computes a Warrant
+// hash (decision 18). Warrant's guest implements every gate in Rust;
+// test/vectors/usage-gates.json holds the cases both must decide alike.
+// It returns nil when the note may settle as far as these checks go.
 func Decide(d Delivery, r UsageRecord, amount uint64) error {
 	w := r.WindowEnd - r.WindowStart
 	switch {
@@ -20,6 +24,8 @@ func Decide(d Delivery, r UsageRecord, amount uint64) error {
 		return errors.New("D4: window is not one piece")
 	case d.ServiceStart < 0 || int64(r.WindowStart) != d.ServiceStart+int64(r.FirstIndex)*d.PieceS:
 		return errors.New("D4: window is not the window of its index")
+	case int64(r.WindowEnd) > d.ServiceEnd:
+		return errors.New("D4: window ends after the service period")
 	case r.Creditable == 0 || r.Creditable > w:
 		return errors.New("D8: creditable is zero or longer than the window")
 	case r.Units > r.Creditable:

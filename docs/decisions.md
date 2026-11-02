@@ -63,6 +63,7 @@ handoff (`docs/handoff/`).
 | 37 | 2026-11-02 | The index origin is `delivery.service_start`; the delivery section carries `service_start`, `service_end`, `piece_s`, `challenge_timeout_s`; the adapter refuses a policy whose period differs from the Request's | Taken | Lease evidence 5a.1, 5a.2; `pkg/adapter/warrant` | Derive the origin from `validity.after` (breaks when authorization precedes provisioning) |
 | 38 | 2026-11-02 | Batches close once; a late note is refused; the guardrail sets note windows so none expires inside an unfinished batch (BG-6); the seller keeps a settled/held/open reservation ledger (SS-10) | Taken | Lease evidence 5a.5, SS-10, SS-11, BG-6 | Per-hour obligations on chain (contract change) |
 | 39 | 2026-11-02 | Gates D4 to D9 have a Go reference (`warrant.Decide`) and shared decision vectors (`test/vectors/usage-gates.json`) that Warrant's `authorize_meter` must match | Taken | `pkg/adapter/warrant`, DL-12 | None |
+| 40 | 2026-11-02 | The rent case settles through the framework interface (C): journal v2 with `schemaId` on `WarrantEscrow`, proof only; PE-0 (`policy-execution/docs/handoff/04-rent-interface-v1.md`) is its specification. Interface A (invoice journal as-is) is superseded; B (invoice journal plus delivery words on `ProofInvoiceEscrow`) is not for production and is not implemented | Chosen by the owner; PE-0's text awaits review | Lease evidence §5, integration §7, §10 | Implement B as a pilot bridge, thrown away at C |
 
 ## Decisions in full
 
@@ -258,3 +259,10 @@ party could supply the path. *Outcome:* the gate, the ledger, batch closing with
 BG-6, `service_start` as the one origin, the formula for `creditable` with its
 commercial meaning, the claims replaced, and the Go reference with shared vectors so
 the two implementations cannot drift again. *Reversal:* per row.
+
+**40 Interface C only.** *Owner's words:* "we can't use B for production." *Alternatives:*
+B as a pilot bridge on the existing `ProofInvoiceEscrow` (fast if the framework slips,
+but a throwaway image and contract patch); A (cannot carry `deliverySpecHash`, so the
+escrow cannot check the delivery spec the buyer approved). *Outcome:* PE-0 written
+against the framework design; the pocc side needs no artifact change; phase D waits for
+framework steps 2 and 3. *Reversal:* implement B.

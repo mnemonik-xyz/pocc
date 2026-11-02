@@ -1,5 +1,5 @@
 {
-  "comment": "Shared decision vectors for gates D4 to D9 (lease evidence 5a.3, DL-12). pocc: pkg/adapter/warrant.Decide; warrant: authorize_meter. service_start 1794819600 = 2026-11-16T09:00:00Z, piece 3600, quicknet grid.",
+  "comment": "Shared decision vectors for the per-record parts of gates D1 and D4 to D9 (lease evidence 5a.3, DL-12). pocc: pkg/adapter/warrant.Decide; warrant: authorize_meter. Not covered here: D1 batch shape, D2, D3, and D5's note.deliverable_hash == hash(record), which need Warrant's encodings. service_start 1794819600 = 2026-11-16T09:00:00Z, service_end +24 h, piece 3600, quicknet grid: creditable is 3540 for hour 0 and 3600 for every later hour, the last included.",
   "delivery": {"kind": "signed_usage", "meter_key": "k", "unit": 1, "price_per_unit": 1100, "tolerance": 0, "min_coverage_bp": 10000, "min_assurance": 0, "meter_spec": "00", "service_start": 1794819600, "service_end": 1794906000, "piece_s": 3600, "challenge_timeout_s": 300},
   "cases": [
     {"name": "boundary hour, perfect: 3540 of 3540 creditable, full note", "record": {"first_index": 0, "last_index": 0, "window_start": 1794819600, "window_end": 1794823200, "units": 3540, "creditable": 3540, "assurance": 0}, "amount": 3894000, "ok": true},
@@ -13,6 +13,10 @@
     {"name": "creditable above window", "record": {"first_index": 1, "last_index": 1, "window_start": 1794823200, "window_end": 1794826800, "units": 3600, "creditable": 3601, "assurance": 0}, "amount": 0, "ok": false, "gate": "D8"},
     {"name": "assurance value 2", "record": {"first_index": 1, "last_index": 1, "window_start": 1794823200, "window_end": 1794826800, "units": 3600, "creditable": 3600, "assurance": 2}, "amount": 0, "ok": false, "gate": "D8"},
     {"name": "range record", "record": {"first_index": 1, "last_index": 2, "window_start": 1794823200, "window_end": 1794826800, "units": 3600, "creditable": 3600, "assurance": 0}, "amount": 0, "ok": false, "gate": "D1"},
+    {"name": "last hour of the service (hour 23): 3600 creditable, because the interval that starts at 23:59:24 ends inside it; perfect", "record": {"first_index": 23, "last_index": 23, "window_start": 1794902400, "window_end": 1794906000, "units": 3600, "creditable": 3600, "assurance": 0}, "amount": 3960000, "ok": true},
+    {"name": "window after the service end", "record": {"first_index": 24, "last_index": 24, "window_start": 1794906000, "window_end": 1794909600, "units": 3600, "creditable": 3600, "assurance": 0}, "amount": 0, "ok": false, "gate": "D4"},
+    {"name": "uncredited middle hour, zero record, zero note", "record": {"first_index": 5, "last_index": 5, "window_start": 1794837600, "window_end": 1794841200, "units": 0, "creditable": 3600, "assurance": 0}, "amount": 0, "ok": true},
+    {"name": "uncredited middle hour, zero record, nonzero note", "record": {"first_index": 5, "last_index": 5, "window_start": 1794837600, "window_end": 1794841200, "units": 0, "creditable": 3600, "assurance": 0}, "amount": 1, "ok": false, "gate": "D5"},
     {"name": "overflow: units x price", "record": {"first_index": 1, "last_index": 1, "window_start": 1794823200, "window_end": 1794826800, "units": 3600, "creditable": 3600, "assurance": 0}, "amount": 0, "price_per_unit": 9223372036854775807, "ok": false, "gate": "D9"}
   ]
 }

@@ -138,11 +138,18 @@ pub struct SignedUsage {
     pub unit: u16,              // 1 = instance-second, 2 = gpu-second (table in core)
     pub price_per_unit: u64,    // token base units per unit
     pub tolerance: u64,         // token base units a note may exceed units*price
-    pub min_coverage_bp: u16,     // Deny a record below this share of its window
+    pub min_coverage_bp: u16,   // creditable interval coverage floor; below it the note must be 0
     pub min_assurance: u8,      // 0 = L0 (no TEE), 1 = L1 (SEV-SNP)
     pub meter_spec: Hash,       // hash of the meter's parameter document
+    pub service_start: u64,     // origin of the piece index; on a piece boundary
+    pub service_end: u64,       // (service_end - service_start) is a multiple of piece_s
+    pub piece_s: u64,           // 3600 for PoCC
+    pub challenge_timeout_s: u64, // the grace after a piece before the provider stops
 }
 ```
+
+The normative copy is PE-0 (`docs/handoff/04-rent-interface-v1.md` in policy-execution,
+section 2); this one is kept in step with it.
 
 `min_coverage_bp` and `min_assurance` sit in the delivery check, not in the rule tree, so
 the Verus-proved evaluator and the `Rule` enum do not change. Rule atoms for them can
@@ -171,7 +178,7 @@ inside the Request together with `policy_hash` from `warrant-policy hash`):
 {
   "case": "rent",
   "version": 1,
-  "scope": {"chain_id": 5042002, "vault": "<ProofInvoiceEscrow>", "token": "0x3600000000000000000000000000000000000000"},
+  "scope": {"chain_id": 5042002, "vault": "<WarrantEscrow, rent deployment>", "token": "0x3600000000000000000000000000000000000000"},
   "validity": {"after": 1794819600, "until": 1795424400},
   "customer": "<buyer wallet>",
   "registry_key": "<secp256k1>",
@@ -188,9 +195,14 @@ inside the Request together with `policy_hash` from `warrant-policy hash`):
     "tolerance": 0,
     "min_coverage_bp": 9500,
     "min_assurance": 0,
-    "meter_spec": "<hash of the pocc object>"
+    "meter_spec": "<hash of the pocc object>",
+    "service_start": 1794819600,
+    "service_end": 1794906000,
+    "piece_s": 3600,
+    "challenge_timeout_s": 300
   },
-  "rule": {"all": ["accepted", {"vendor_category_in": [12]}]}
+  "rule": {"all": ["accepted", {"vendor_category_in": [12]}]},
+  "constants": {"settlement_margin_s": 1800}
 }
 ```
 
@@ -367,9 +379,12 @@ with that hour unpaid. A guardrail that signs nothing is non-cooperation: the pr
 stops `challenge_timeout_s` after the hour ended and settles the notes it holds; the
 batch closes once and a note that arrives later is refused (lease evidence 5a.5, SS-11).
 
-Then the rule tree runs on the existing facts. The journal is the invoice layout plus
-the two delivery words: `deliverySpecHash` and
-`deliveryHash = hash_tagged(warrant/usage-batch/v1, records in index order)`.
+Then the rule tree runs on the existing facts. The journal is the framework's v2
+layout (PE-0 section 5, decision 40): the fifteen header words, `schemaId` first and
+`deliverySpecHash` and `deliveryHash = hash_tagged(warrant/usage-batch/v1, records in
+index order)` last, then the rent extension `leaseId, batch, ceiling, customer`. It
+settles on `WarrantEscrow` with a proof only; the invoice journal and
+`ProofInvoiceEscrow` are not used by the rent case.
 
 **What the guest proves and does not prove.** It proves that the key the owner named
 signed one record per hour billed, that each record names the pinned `meter_spec`, and
@@ -527,13 +542,13 @@ widening of the Verus claim, golden vectors changed only on purpose.
 
 | ID | Package | Depends on | Acceptance |
 |---|---|---|---|
-| PE-0 | One versioned interface document for the rent case: policy types, signing encodings, journal words, contract ABI, image and schema binding, replay domain; marks superseded text in `lease-evidence.md` and here | Framework step 3 decision (journal, escrow) | Reviewed by the owner; PE-2, PE-3 and PE-6 cite it |
+| PE-0 | `docs/handoff/04-rent-interface-v1.md`: the rent interface on the framework (C): policy types, signed objects and encodings, guest input, journal v2 with the rent extension, `WarrantEscrow` terms and `settle` checks, image and schema binding, replay domain, migration | Written 2 Nov; the owner's review | PE-2, PE-3 and PE-6 cite it; its acceptance list (section 11) |
 | PE-1 | Spec update: `docs/product/lease-evidence.md` and `docs/handoff/03-rent-case.md` state the PoCC meter, the `UsageRecord` of section 7, `meter_spec`, `min_coverage_bp`, `min_assurance`, `referee_key`, and the trust table row for the meter key. Answers Decision 6 | — | Owner approves; DL-5 (trust table names the meter key and its failure mode) |
 | PE-2 | `SignedUsage` delivery spec and `deliverySpecHash` in `core/src/framework` | Framework step 1 | A policy without `delivery` or with zero `meter_spec` is rejected; hash pinned in a test |
 | PE-3 | `core/src/meter.rs`: `UsageRecord`, `usage_message` (`warrant/usage/v1`), gates D1–D7 in `authorize_meter`, `deliveryHash` | PE-2, framework step 2 (journal v2) | DL-1 to DL-3; a removed-check test per gate; fixtures from the PoCC live-test receipt |
 | PE-4 | `warrant-evidence sign-usage`, `warrant-host check rent` | PE-3 | Signs the JSON `pocc-verify` writes; the native check equals the guest's on the fixtures |
 | PE-5 | Rent guest image; `prove rent`, `image-id rent` | PE-3, framework step 4 | Image ID from a `RISC0_USE_DOCKER=1` build recorded (ME-5); ME-2 journal mutation test |
-| PE-6 | Escrow: `deliverySpecHash` check at `settle`; `PoccAnchor.sol` beside the escrow contracts | Framework step 3, decision on #19 | DL-4; `forge test` on a machine with Foundry |
+| PE-6 | `WarrantEscrow` rent hooks and `settle` checks of PE-0 section 6; deployment on Arc testnet with the rent image and `schemaId`; `PoccAnchor.sol` beside it | Framework step 3, PE-3 | DL-4; a batch settles once and is refused twice; `PoccAnchor` anchors a root per slot |
 | PE-7 | `templates/rent-pocc-v1.json` | PE-2 | Validates against the schema; policy hash pinned |
 
 ### pocc
@@ -579,7 +594,7 @@ its outputs are JSON shapes that PE-3 fixes.
 
 | Risk | Effect | Mitigation |
 |---|---|---|
-| Framework step 3 (`WarrantEscrow`) and the unmerged #19 factory are undecided | Phase D waits | Phases A–C and F do not need the chain; the dev anchor stays for tests |
+| Framework steps 2 and 3 (`WarrantEscrow`, journal v2) are in flight; the rent case settles only through them (decision 40) | Phase D waits for them | Phases A–C and F do not need the chain; the dev anchor stays for tests; PE-0 is written against the framework design so PE-2 and PE-3 can start when step 1 lands |
 | Rent guest proving cost: one invoice proof measured at about 445 s plus 80 s wrap | Batch size and settlement cadence | ME-8 measures first; a daily batch of 24 hours is the default |
 | Two key families for one buyer (Ed25519 for PoCC, secp256k1 for Warrant) | Key management complexity | Keep PoCC keys for PoCC artifacts only; the guardrail holds the Warrant keys; no key is used by both |
 | Hour alignment: PoCC slots are 60 s on drand rounds, hours are clock hours | Off-by-one at hour edges | Credit is attributed by the end time of each interval (as today); a period start on a clock hour removes partial first hours |

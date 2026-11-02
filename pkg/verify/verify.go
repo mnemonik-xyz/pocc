@@ -7,7 +7,6 @@ package verify
 import (
 	"context"
 	"fmt"
-	"sort"
 	"sync"
 	"time"
 
@@ -278,9 +277,29 @@ func Creditable(info pocc.BeaconInfo, slot uint64, start, end time.Time) map[str
 	}
 }
 
-// UsageRecords turns a verdict into one PoCC-native usage record per billing
-// hour. sign may be nil (unsigned records for an adapter to translate). An
-// INVALID verdict yields none. Hour indices count from the period start.
+// Covered returns the last hour index the receipt speaks for: the hour that
+// contains the end of the last anchored heartbeat's slot interval (or the boot
+// slot when no heartbeat exists). Hours after it have not happened yet, or
+// were never served; no record is written for them.
+func Covered(R *pocc.Receipt, info pocc.BeaconInfo, start time.Time) int64 {
+	last := R.Boot.Round
+	if n := len(R.Heartbeats); n > 0 {
+		last = R.Heartbeats[n-1].Round
+	}
+	t := beacon.Time(info, last).Add(-time.Second)
+	if t.Before(start) {
+		return -1
+	}
+	return int64(t.Sub(start) / time.Hour)
+}
+
+// UsageRecords turns a verdict into one PoCC-native usage record per service
+// hour from hour 0 to the last hour the receipt covers (Covered). An hour with
+// no credited interval gets a record with zero units, so that the consumer's
+// batch has no gap (lease evidence D1) and the buyer can sign a zero note.
+// sign may be nil (unsigned records for an adapter to translate). An INVALID
+// verdict is not delivery evidence and yields no record at all: the policy
+// decides whether to stop, never to pay.
 func UsageRecords(R *pocc.Receipt, v pocc.Verdict, sign func(any) (string, error)) ([]pocc.UsageRecord, error) {
 	if v.Status == StatusInvalid {
 		return nil, nil
@@ -304,24 +323,21 @@ func UsageRecords(R *pocc.Receipt, v pocc.Verdict, sign func(any) (string, error
 		return nil, err
 	}
 	meterSpec := pocc.Hex(msh)
-	hours := make([]string, 0, len(v.PerHourS))
-	for h := range v.PerHourS {
-		hours = append(hours, h)
+	last := Covered(R, info, start)
+	if lastHour := int64(end.Sub(start)/time.Hour) - 1; last > lastHour {
+		last = lastHour
 	}
-	sort.Strings(hours)
 	var out []pocc.UsageRecord
-	for _, h := range hours {
-		t, err := time.Parse(time.RFC3339, h)
-		if err != nil {
-			return nil, err
-		}
+	for k := int64(0); k <= last; k++ {
+		t := start.Add(time.Duration(k) * time.Hour)
+		h := t.Format(time.RFC3339)
 		s := v.PerHourS[h]
 		cr := creditable[h]
 		if cr <= 0 || s > cr {
 			return nil, fmt.Errorf("hour %s: credited %d s, creditable %d s", h, s, cr)
 		}
 		rec := pocc.UsageRecord{Version: pocc.Version, Lease: pocc.Hex(pocc.LeaseID(R.Request)),
-			Hour: int64(t.Sub(start) / time.Hour), WindowStart: t.Unix(), WindowEnd: t.Add(time.Hour).Unix(),
+			Hour: k, WindowStart: t.Unix(), WindowEnd: t.Add(time.Hour).Unix(),
 			Unit: "instance-second", Units: s, Creditable: cr, Assurance: v.Assurance, CoverageBP: s * 10000 / cr,
 			MeterSpec: meterSpec, ReceiptHash: v.ReceiptHash}
 		if sign != nil {
