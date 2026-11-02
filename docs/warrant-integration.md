@@ -590,7 +590,7 @@ its outputs are JSON shapes that PE-3 fixes.
 | C. Hourly loop | PC-3, PE-4, PE-7 | After B | Notes and records flow for a simulated day |
 | D. Chain | PE-6, PC-4 | After framework step 3 and the #19 decision | Anchors and settlement on Arc testnet |
 | E. End to end | PE-5, PC-6 | After C and D | One PoCC-metered batch proved and paid on Arc testnet |
-| F. Dispute (future) | PC-5 | When the owner lifts decision 20 | Simulated disputes resolve by re-execution |
+| F. Dispute (future) | PC-7 | When the owner lifts decision 20 | Simulated disputes resolve by re-execution |
 | G. Verifier in the guest | X-1 | After E | Meter key removed |
 
 | Risk | Effect | Mitigation |
