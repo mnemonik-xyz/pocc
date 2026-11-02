@@ -64,8 +64,10 @@ func (p Params) Last(b uint32) uint32 {
 	return last
 }
 
-// Grace is G = challenge_timeout_s + M.
-func (p Params) Grace() int64 { return p.ChallengeTimeoutS + p.SettlementMarginS }
+// Grace is G = 2 * challenge_timeout_s + M: one timeout for the batch's last
+// note, one for the batch signature (BG-7), and the margin M budgeted for the
+// slower fallback proof with per-record signatures (lease evidence 5a.5).
+func (p Params) Grace() int64 { return 2*p.ChallengeTimeoutS + p.SettlementMarginS }
 
 // Deadline is deadline(b) = service_start + (last(b) + 1) * piece_s + G: the one
 // deadline formula of 5a.5. BG-6 sets note windows to it; SS-10 and the

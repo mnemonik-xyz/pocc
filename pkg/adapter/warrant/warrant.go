@@ -305,6 +305,19 @@ func SignBatchExternal(dir, cmd, keyPath string, recs []UsageRecord) (Signed, er
 	if len(recs) == 0 {
 		return Signed{}, errors.New("no records in the batch")
 	}
+	// The batch is built from the hourly records persisted at each hour's
+	// signing (lease evidence 5a.2, BG-7), never from regenerated ones: a
+	// regenerated record that differs is refused.
+	persisted, err := LoadPersisted(dir, recs[0].FirstIndex, recs[len(recs)-1].LastIndex)
+	if err != nil {
+		return Signed{}, err
+	}
+	for i, r := range recs {
+		if !sameRecord(persisted[i], r) {
+			return Signed{}, fmt.Errorf("hour %d: the regenerated record differs from the persisted one; not signing", r.FirstIndex)
+		}
+	}
+	recs = persisted
 	in := filepath.Join(dir, fmt.Sprintf("usage-batch-%d-%d.json", recs[0].FirstIndex, recs[len(recs)-1].LastIndex))
 	sig := in[:len(in)-5] + ".sig.json"
 	b, _ := json.MarshalIndent(recs, "", "  ")
@@ -319,6 +332,33 @@ func SignBatchExternal(dir, cmd, keyPath string, recs []UsageRecord) (Signed, er
 		return Signed{}, fmt.Errorf("batch signer: %w", err)
 	}
 	return Signed{Record: in, Signature: sig}, nil
+}
+
+// LoadPersisted reads the hourly records usage-<k>.json that SignExternal wrote
+// for indices first..last, in order; a missing hour is an error.
+func LoadPersisted(dir string, first, last uint32) ([]UsageRecord, error) {
+	var out []UsageRecord
+	for k := first; k <= last; k++ {
+		b, err := os.ReadFile(filepath.Join(dir, fmt.Sprintf("usage-%d.json", k)))
+		if err != nil {
+			return nil, fmt.Errorf("persisted record for hour %d: %w", k, err)
+		}
+		var r UsageRecord
+		if err := json.Unmarshal(b, &r); err != nil {
+			return nil, fmt.Errorf("persisted record for hour %d: %w", k, err)
+		}
+		if r.FirstIndex != k || r.LastIndex != k {
+			return nil, fmt.Errorf("persisted record for hour %d carries index %d..%d", k, r.FirstIndex, r.LastIndex)
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func sameRecord(a, b UsageRecord) bool {
+	x, _ := json.Marshal(a)
+	y, _ := json.Marshal(b)
+	return string(x) == string(y)
 }
 
 // HexHash formats a hash for the policy's meter_spec field.
