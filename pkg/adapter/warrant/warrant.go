@@ -27,19 +27,22 @@ import (
 // Policy is Warrant's rent policy in its "one DSL shape". PoCC reads only the
 // fields it needs and keeps the rest opaque.
 type Policy struct {
-	Case          string          `json:"case"`
-	Version       int             `json:"version"`
-	Scope         Scope           `json:"scope"`
-	Validity      Validity        `json:"validity"`
-	Customer      string          `json:"customer,omitempty"`
-	RegistryKey   string          `json:"registry_key,omitempty"`
-	AcceptanceKey string          `json:"acceptance_key,omitempty"`
-	LeaseID       string          `json:"lease_id"`
-	Ceiling       int64           `json:"ceiling"`
-	MaxNote       int64           `json:"max_note"`
-	BatchSize     int             `json:"batch_size"`
-	Delivery      Delivery        `json:"delivery"`
-	Rule          json.RawMessage `json:"rule"`
+	Case          string   `json:"case"`
+	Version       int      `json:"version"`
+	Scope         Scope    `json:"scope"`
+	Validity      Validity `json:"validity"`
+	Customer      string   `json:"customer,omitempty"`
+	RegistryKey   string   `json:"registry_key,omitempty"`
+	AcceptanceKey string   `json:"acceptance_key,omitempty"`
+	LeaseID       string   `json:"lease_id"`
+	Ceiling       int64    `json:"ceiling"`
+	MaxNote       int64    `json:"max_note"`
+	BatchSize     int      `json:"batch_size"`
+	// SettlementMarginS is M of lease evidence 5a.5: a typed, hashed field
+	// (PE-0 section 2.1), so deadline(b) follows from the policy alone.
+	SettlementMarginS int64           `json:"settlement_margin_s"`
+	Delivery          Delivery        `json:"delivery"`
+	Rule              json.RawMessage `json:"rule"`
 }
 
 // Scope fixes where payment happens.
@@ -116,10 +119,11 @@ func Check(q pocc.Request) (int64, error) {
 		return 0, fmt.Errorf("piece_s %d: PoCC meters clock hours", d.PieceS)
 	case d.ServiceStart != periodUnix(q.Period.Start) || d.ServiceEnd != periodUnix(q.Period.End):
 		return 0, errors.New("service_start or service_end differs from the request's period")
-	case p.Validity.After > d.ServiceStart || p.Validity.Until < d.ServiceEnd+d.ChallengeTimeoutS:
-		return 0, errors.New("validity does not cover the service period and the challenge timeout")
-	case d.ChallengeTimeoutS <= 0:
-		return 0, errors.New("challenge_timeout_s missing")
+	case d.ChallengeTimeoutS <= 0 || p.SettlementMarginS <= 0:
+		return 0, errors.New("challenge_timeout_s or settlement_margin_s missing")
+	case p.Validity.After > d.ServiceStart || p.Validity.Until < d.ServiceEnd+d.ChallengeTimeoutS+p.SettlementMarginS:
+		// deadline(last batch) = service_end + G, with G = challenge_timeout_s + M (5a.5).
+		return 0, errors.New("validity.until is before deadline(last batch)")
 	case q.MeterSpec.Anchor.Kind == "evm" && (q.MeterSpec.Anchor.ChainID != p.Scope.ChainID):
 		return 0, errors.New("anchor chain differs from the policy scope chain")
 	}

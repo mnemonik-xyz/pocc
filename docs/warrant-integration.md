@@ -187,6 +187,7 @@ inside the Request together with `policy_hash` from `warrant-policy hash`):
   "ceiling": 95040000,
   "max_note": 3960000,
   "batch_size": 24,
+  "settlement_margin_s": 1800,
   "delivery": {
     "kind": "signed_usage",
     "meter_key": "<secp256k1, the buyer's pocc-verify key>",
@@ -201,8 +202,7 @@ inside the Request together with `policy_hash` from `warrant-policy hash`):
     "piece_s": 3600,
     "challenge_timeout_s": 300
   },
-  "rule": {"all": ["accepted", {"vendor_category_in": [12]}]},
-  "constants": {"settlement_margin_s": 1800}
+  "rule": {"all": ["accepted", {"vendor_category_in": [12]}]}
 }
 ```
 

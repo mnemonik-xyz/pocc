@@ -154,7 +154,7 @@ func request(args []string) {
 			p := warrant.Policy{Case: "rent", Version: 1,
 				Scope:    warrant.Scope{ChainID: *chain, Vault: *vault, Token: *token},
 				Validity: warrant.Validity{After: ps.Unix(), Until: pe.Add(7 * 24 * time.Hour).Unix()},
-				LeaseID:  pocc.Hex(pocc.LeaseID(q)), Ceiling: *ceiling, MaxNote: *maxNote, BatchSize: 24,
+				LeaseID:  pocc.Hex(pocc.LeaseID(q)), Ceiling: *ceiling, MaxNote: *maxNote, BatchSize: 24, SettlementMarginS: 1800,
 				Delivery: warrant.Delivery{Kind: warrant.KindSignedUsage, MeterKey: *meter, Unit: warrant.UnitInstanceSecond,
 					PricePerUnit: *price, MinCoverageBP: uint16(*minCoverage), MeterSpec: pocc.Hex(ms),
 					ServiceStart: ps.Unix(), ServiceEnd: pe.Unix(), PieceS: 3600, ChallengeTimeoutS: 300},

@@ -106,7 +106,7 @@ func WarrantPolicy(q pocc.Request, meterKey string, price int64, meterSpecHex st
 	p := warrant.Policy{Case: "rent", Version: 1,
 		Scope:    warrant.Scope{ChainID: EscrowChainID, Vault: EscrowAddr, Token: TokenAddr},
 		Validity: warrant.Validity{After: ps.Unix(), Until: pe.Add(7 * 24 * time.Hour).Unix()},
-		LeaseID:  pocc.Hex(pocc.LeaseID(q)), Ceiling: 24 * 3600 * price, MaxNote: 3600 * price, BatchSize: 24,
+		LeaseID:  pocc.Hex(pocc.LeaseID(q)), Ceiling: 24 * 3600 * price, MaxNote: 3600 * price, BatchSize: 24, SettlementMarginS: 1800,
 		Delivery: warrant.Delivery{Kind: warrant.KindSignedUsage, MeterKey: meterKey, Unit: warrant.UnitInstanceSecond,
 			PricePerUnit: price, MinCoverageBP: 9500, MeterSpec: meterSpecHex,
 			ServiceStart: ps.Unix(), ServiceEnd: pe.Unix(), PieceS: 3600, ChallengeTimeoutS: 300},
