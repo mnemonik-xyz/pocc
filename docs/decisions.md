@@ -66,6 +66,7 @@ handoff (`docs/handoff/`).
 | 40 | 2026-11-02 | The rent case settles through the framework interface (C): journal v2 with `schemaId` on `WarrantEscrow`, proof only; PE-0 (`policy-execution/docs/handoff/04-rent-interface-v1.md`) is its specification. Interface A (invoice journal as-is) is superseded; B (invoice journal plus delivery words on `ProofInvoiceEscrow`) is not for production and is not implemented | Chosen by the owner; PE-0's text awaits review | Lease evidence §5, integration §7, §10 | Implement B as a pilot bridge, thrown away at C |
 | 41 | 2026-11-02 | The state machine of lease evidence 5a.5 is modelled in `pkg/lease` and the DL-11 scenarios run as tests; the model found that a full batch must settle before its own `deadline(b)`, not at the lease's end, so the worker settles each batch as it closes | Taken | `pkg/lease`, SS-4 | None |
 | 42 | 2026-11-02 | The seller's challenge carries the amount its own verifier expects; a note below it is underpayment for delivered service and stops the lease after that piece, while a zero note for an outage the seller saw itself continues. Amounts are bounded (2^62) and every sum is checked | Taken | `pkg/lease`, lease evidence 5a.5 | Leave the gate to PC-3 and let the model continue on any note |
+| 43 | 2026-11-02 | The pilot's prover is a GPU host with RISC Zero's CUDA prover; the CPU prover is for development and the Groth16 wrap; batches are daily; `settlement_margin_s = 1800` assumes the GPU until PE-8 and DL-13 measure it | Taken, with the owner | Lease evidence §4, §4c, ME-8; PE-0 §2.1; compute-rent §8; integration §10, §11 | A CPU prover: a 2.5 h margin, batches of at most about 6 h, about $1.30 per VM-day, no VM below about $10 a day |
 
 ## Decisions in full
 
@@ -286,3 +287,15 @@ and expects `units × price`; a note below that is kept (it is money) and the le
 stops; a zero expectation is an outage and a zero note is correct. Also from that
 round: amounts bounded at 2^62, checked additions, `Exposure` exact and rounded up, a
 grace longer than a piece refused. *Reversal:* per row.
+
+**43 GPU prover.** *Found by:* the cycle measurement of 2 Nov (`docs/measurements.md`,
+`bench/rent-guest`): the rent work is 674,352 cycles per hour of service, linear in
+the hours, ten times the invoice guest for a daily batch; on the one CPU prover
+measured that is about 77 minutes and $1.30 per VM-day, which makes proving 98 % of
+the protocol cost and prices cheap VMs out. *Owner's words:* "please adopt all docs
+following GPU prover usage." *Alternatives:* a CPU prover with a 2.5-hour margin and
+small batches; fewer signatures per hour (a meter signature over a batch of records,
+PE-0's range extension), which halves the work and is still open; a rented proving
+service. *Outcome:* the GPU is the planned prover in every document; the figures for
+it are published rates (100 kHz to 1 MHz), not measurements, until PE-8. *Reversal:*
+per row.

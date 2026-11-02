@@ -597,7 +597,7 @@ its outputs are JSON shapes that PE-3 fixes.
 | Risk | Effect | Mitigation |
 |---|---|---|
 | Framework steps 2 and 3 (`WarrantEscrow`, journal v2) are in flight; the rent case settles only through them (decision 40) | Phase D waits for them | Phases A–C and F do not need the chain; the dev anchor stays for tests; PE-0 is written against the framework design so PE-2 and PE-3 can start when step 1 lands |
-| Rent guest proving cost: one invoice proof measured at about 445 s plus 80 s wrap | Batch size and settlement cadence | ME-8 measures first; a daily batch of 24 hours is the default |
+| Rent guest proving cost: 674,352 zkVM cycles per hour of service (`docs/measurements.md`), about 77 min per daily batch on the one CPU prover measured, $1.30 per VM-day at $1/h | Prices VMs below about $10 a day out on a CPU | The pilot's prover is a GPU (decision 43): published RISC Zero rates put a daily batch at 16 s to 3 min; PE-8 and DL-13 measure it before the batch size and `settlement_margin_s` are set; the 80 s wrap is the fixed cost per batch, so batches are daily |
 | Two key families for one buyer (Ed25519 for PoCC, secp256k1 for Warrant) | Key management complexity | Keep PoCC keys for PoCC artifacts only; the guardrail holds the Warrant keys; no key is used by both |
 | Hour alignment: PoCC slots are 60 s on drand rounds, hours are clock hours | Off-by-one at hour edges | Credit is attributed by the end time of each interval (as today); a period start on a clock hour removes partial first hours |
 | The meter key is the buyer's: a buyer could under-credit | Provider loses hours | Public re-execution and the dispute of section 8; the referee key; X-1 removes the issue |
