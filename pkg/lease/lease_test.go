@@ -414,3 +414,30 @@ func TestLossLedgerAndNegativeLatency(t *testing.T) {
 		t.Fatal("Exposure accepted a negative shutdown latency")
 	}
 }
+
+// Sixth audit round: when the loss ledger is at its bound, a timed-out piece
+// and a provisional piece are kept as unresolved accounting, never dropped;
+// the service still stops.
+func TestUnresolvedWhenLossLedgerFull(t *testing.T) {
+	p := params(8, 1, uint64(1)<<62)
+	p.MaxNote = uint64(1) << 61
+	l, _ := New(p)
+	must(t, l.Accept(start-600))
+	must(t, l.Boot(start-120))
+	for k := uint32(0); k < 4; k++ { // four expired batches fill Lost to 2^63
+		must(t, l.PieceEnd(k, p.MaxNote, p.End(k)))
+		answer(t, l, k, p.MaxNote, p.End(k)+30)
+		if _, err := l.Settle(k, p.Deadline(k)+1, true); err == nil {
+			t.Fatal("settled past the deadline")
+		}
+	}
+	must(t, l.PieceEnd(4, p.MaxNote, p.End(4))) // challenge 4 open, piece 5 provisional
+	if l.Ledger.Open != 2*p.MaxNote || l.Ledger.Lost != MaxLedger {
+		t.Fatalf("before timeout: %+v", l.Ledger)
+	}
+	l.Tick(p.End(4) + timeout)
+	check(t, l)
+	if l.State != Stopped || l.Ledger.Open != 0 || l.Ledger.Lost != MaxLedger || l.Ledger.Unresolved != 2*p.MaxNote {
+		t.Fatalf("after timeout: state %s %+v\n%s", l.State, l.Ledger, dump(l))
+	}
+}

@@ -151,6 +151,10 @@ const (
 // transition that would exceed the bound is refused and logged, never wrapped.
 type Ledger struct {
 	Settled, Held, Open, Lost uint64
+	// Unresolved holds reservations that left Open or Held but could not be
+	// recorded in Lost because Lost is at its bound. Nothing is ever dropped:
+	// a reservation is in exactly one of the five categories at all times.
+	Unresolved uint64
 }
 
 // lose moves amount into Lost with checked arithmetic.
@@ -162,6 +166,17 @@ func (l *Lease) lose(amount uint64, now int64, why string) error {
 	}
 	l.Ledger.Lost = lost
 	return nil
+}
+
+// release takes a reservation out of Open and records it as lost, or as
+// unresolved when the loss ledger is at its bound. Unresolved never exceeds
+// the ceiling, because Open never does, so this addition cannot fail.
+func (l *Lease) release(amount uint64, now int64, why string) {
+	l.Ledger.Open -= amount
+	if err := l.lose(amount, now, why); err != nil {
+		l.Ledger.Unresolved += amount
+		l.log(now, "%s: %d kept as unresolved accounting", why, amount)
+	}
 }
 
 // Batch is one obligation's worth of pieces.
@@ -402,8 +417,7 @@ func (l *Lease) Tick(now int64) {
 	k := l.open
 	l.hasOpen = false
 	l.Pieces[k] = TimedOut
-	l.Ledger.Open -= l.P.MaxNote
-	_ = l.lose(l.P.MaxNote, now, "timeout")
+	l.release(l.P.MaxNote, now, "timeout")
 	l.log(now, "challenge %d timed out: piece %d unpaid", k, k)
 	if l.State == Running {
 		l.stop(now, fmt.Sprintf("note %d missing", k))
@@ -427,8 +441,7 @@ func (l *Lease) stop(now int64, why string) {
 	for k := range l.Pieces {
 		if l.Pieces[k] == Provisional {
 			l.Pieces[k] = Unserved
-			l.Ledger.Open -= l.P.MaxNote
-			_ = l.lose(l.P.MaxNote, now, "provisional piece")
+			l.release(l.P.MaxNote, now, "provisional piece")
 			l.log(now, "provisional piece %d: unpaid, reservation lost", k)
 		}
 	}
@@ -511,8 +524,8 @@ func (l *Lease) Invariant() error {
 	if committed > l.P.Ceiling {
 		return fmt.Errorf("ledger above the ceiling: %+v", l.Ledger)
 	}
-	if l.Ledger.Lost > MaxLedger {
-		return fmt.Errorf("loss ledger above its bound: %+v", l.Ledger)
+	if l.Ledger.Lost > MaxLedger || l.Ledger.Unresolved > l.P.Ceiling {
+		return fmt.Errorf("loss or unresolved ledger above its bound: %+v", l.Ledger)
 	}
 	var open uint64
 	for _, s := range l.Pieces {
