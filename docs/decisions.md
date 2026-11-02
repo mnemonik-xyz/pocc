@@ -68,6 +68,7 @@ handoff (`docs/handoff/`).
 | 42 | 2026-11-02 | The seller's challenge carries the amount its own verifier expects; a note below it is underpayment for delivered service and stops the lease after that piece, while a zero note for an outage the seller saw itself continues. Amounts are bounded (2^62) and every sum is checked | Taken | `pkg/lease`, lease evidence 5a.5 | Leave the gate to PC-3 and let the model continue on any note |
 | 43 | 2026-11-02 | The pilot's prover is a GPU host with RISC Zero's CUDA prover; the CPU prover is for development and the Groth16 wrap; batches are daily; `settlement_margin_s = 1800` assumes the GPU until PE-8 and DL-13 measure it | Taken, with the owner | Lease evidence §4, §4c, ME-8; PE-0 §2.1; compute-rent §8; integration §10, §11 | A CPU prover: a 2.5 h margin, batches of at most about 6 h, about $1.30 per VM-day, no VM below about $10 a day |
 | 44 | 2026-11-02 | One meter signature over the batch's records (`warrant/usage-batch-signed/v1`) replaces the per-record signatures in the proof; the per-hour records and the notes' binding are unchanged; the guest accepts either form (D2); the guardrail re-signs at batch close (BG-7) | Taken, with the owner | PE-0 §3, §4; lease evidence 5a.2, 5a.3, 5a.5, BG-7, DL-14; `pkg/adapter/warrant`, `pocc-verify` | Per-record signatures only: 16.2 M cycles per daily batch instead of 9.0 M |
+| 45 | 2026-11-02 | The batch is signed from the hourly records persisted at each hour's signing, never from records regenerated from the receipt; the grace is `G = 2 × challenge_timeout_s + M` with `M` budgeted for the per-record fallback proof; DL-13 and PE-8 measure verified succinct and Groth16 receipts, in both signature forms, under concurrent load | Taken | Lease evidence 5a.2, 5a.5, BG-7, DL-13; `pkg/adapter/warrant`, `pkg/lease`, `bench/rent-guest` | Sign regenerated records (a receipt re-run could change what was signed); budget `G` for the fast path only (the fallback then misses the deadline) |
 
 ## Decisions in full
 
@@ -312,3 +313,14 @@ guardrail that will not re-sign is non-cooperation and the seller falls back to 
 per-record signatures it holds. *Alternatives:* one note per batch (breaks per-hour
 billing and the challenge); aggregate signatures (not in the zkVM accelerator set).
 *Reversal:* drop `batch_signature`; nothing else changes.
+
+**45 Persisted records, the fallback inside the deadline, the proof that settles.**
+*Found by:* the review of 2 Nov after decision 44, four items: batches built from
+regenerated receipts could sign records that differ from what the guardrail signed hour
+by hour; the batch-signature wait and the slower fallback proof were outside the
+deadline budget; the benchmark's `prove` made composite receipts, which never settle;
+and GPU cost had no throughput measurement. *Outcome:* `SignBatchExternal` loads the
+persisted `usage-<k>.json` files and refuses a differing regenerated record;
+`G = 2 × challenge_timeout_s + M` and `M` is sized for the per-record proof; the
+benchmark proves succinct, wraps to Groth16 and verifies both, with a `load N` mode;
+PE-8 and DL-13 say so. *Reversal:* per row.
