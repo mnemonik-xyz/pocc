@@ -69,7 +69,7 @@ handoff (`docs/handoff/`).
 | 43 | 2026-11-02 | The pilot's prover is a GPU host with RISC Zero's CUDA prover; the CPU prover is for development and the Groth16 wrap; batches are daily; `settlement_margin_s = 1800` assumes the GPU until PE-8 and DL-13 measure it | Taken, with the owner | Lease evidence §4, §4c, ME-8; PE-0 §2.1; compute-rent §8; integration §10, §11 | A CPU prover: a 2.5 h margin, batches of at most about 6 h, about $1.30 per VM-day, no VM below about $10 a day |
 | 44 | 2026-11-02 | One meter signature over the batch's records (`warrant/usage-batch-signed/v1`) replaces the per-record signatures in the proof; the per-hour records and the notes' binding are unchanged; the guest accepts either form (D2); the guardrail re-signs at batch close (BG-7) | Taken, with the owner | PE-0 §3, §4; lease evidence 5a.2, 5a.3, 5a.5, BG-7, DL-14; `pkg/adapter/warrant`, `pocc-verify` | Per-record signatures only: 16.2 M cycles per daily batch instead of 9.0 M |
 | 45 | 2026-11-02 | The batch is signed from the hourly records persisted at each hour's signing, never from records regenerated from the receipt; the grace is `G = 2 × challenge_timeout_s + M` with `M` budgeted for the per-record fallback proof; DL-13 and PE-8 measure verified succinct and Groth16 receipts, in both signature forms, under concurrent load | Taken | Lease evidence 5a.2, 5a.5, BG-7, DL-13; `pkg/adapter/warrant`, `pkg/lease`, `bench/rent-guest` | Sign regenerated records (a receipt re-run could change what was signed); budget `G` for the fast path only (the fallback then misses the deadline) |
-| 46 | 2026-11-02 | Signature verification of the rent case moves from the guest to Solidity, in the settle transaction: `WarrantEscrow.settle(seal, journal, facts)` hands `facts` (the batch's records and notes with their 65-byte signatures, index order) to a stateless `RentFactsVerifier` pinned per `schemaId` beside the image ID; it recomputes each digest, recovers the signer (low-s, no zero address), compares it with the `meterAddr` and `acceptanceAddr` words of the journal, and recomputes `factsHash` over the signature-free bytes, which must equal the journal's. The guest derives the two addresses from the policy's keys, keeps the nine pre-gate checks except the two signature checks, D1 and D3–D9, the credential signature and the rule tree, and commits `factsHash`, `meterAddr`, `acceptanceAddr`. No registry, no attestation state. Amends 40 (the escrow gains `facts` and one verifier call); the mode is a per-chain choice by `schemaId`, two images from one guest source. Supersedes 44 and, of 45, the re-signing wait and the fallback proof if taken; persisted records and 43's margin stay, `G = challenge_timeout_s + settlement_margin_s` | Proposed, awaits the owner; revised 2 Nov twice after the reviews of PR #1 | Integration §6.2 steps 10–11, §6.3, §7, PE-9, PC-8; PE-0 §3, §5, §6; `pkg/adapter/warrant`; `bench/rent-guest`; `WarrantEscrow` | Additive to the contract: drop `facts` and the verifier call, the guest verifies signatures again, 44 and 45 return; batches settled under 46 stay valid under 46's image |
+| 46 | 2026-11-02 | Signature verification of the rent case moves from the guest to Solidity, in the settle transaction: `WarrantEscrow.settle(seal, journal, facts)` hands `facts` (the batch's records and notes with their 65-byte signatures, index order) to a stateless `RentFactsVerifier` pinned per `schemaId` beside the image ID; it recomputes each digest, recovers the signer (low-s, no zero address), compares it with the `meterAddr` and `acceptanceAddr` words of the journal, and recomputes `factsHash` over the signature-free bytes, which must equal the journal's. The guest derives the two addresses from the policy's keys, keeps the nine pre-gate checks except the two signature checks, D1 and D3–D9, the credential signature and the rule tree, and commits `factsHash`, `meterAddr`, `acceptanceAddr`. No registry, no attestation state. Amends 40 (the escrow gains `facts` and one verifier call); the mode is a per-chain choice by `schemaId`, two images from one guest source. Supersedes 44 and, of 45, the re-signing wait and the fallback proof if taken; persisted records and 43's margin stay, `G = challenge_timeout_s + settlement_margin_s` | Proposed, awaits the owner; revised 2 Nov twice after the reviews of PR #1 | Integration §6.2 steps 10–11, §6.3, §7, PE-9a, PE-9b, PC-8; handoffs `docs/handoff/`; PE-0 §3, §5, §6; `pkg/adapter/warrant`; `bench/rent-guest`; `WarrantEscrow` | Additive to the contract: drop `facts` and the verifier call, the guest verifies signatures again, 44 and 45 return; batches settled under 46 stay valid under 46's image |
 
 ## Decisions in full
 
@@ -344,9 +344,9 @@ prices (EIP-1108, EIP-2028): 48 recoveries at 3,000, about 7,000 for the 48 `sha
 calls, 8,208 bytes of records and notes plus 48 × 65 bytes of signatures, about 11.5 kB
 of calldata with framing at 16 per byte, together about 335k gas added to `settle`,
 which roughly doubles its cost next to the Groth16 verification; Arc's prices are not
-measured (PE-9). With decision 44 kept (one meter signature per batch, 25 recoveries and
+measured (PE-9a). With decision 44 kept (one meter signature per batch, 25 recoveries and
 no record signatures in calldata) the addition is about 210k gas; 46 takes the simpler
-form, per-hour signatures only, and lets PE-9's measurement reopen that choice.
+form, per-hour signatures only, and lets PE-9a's measurement reopen that choice.
 *Design:* steps 1 to 9 of integration §6.2 are unchanged: the guardrail still signs
 record k and note k hour by hour, the seller still challenges and still serves hour k+1
 against note k, the batch still closes once in the seller's ledger (SS-10). Step 10:
@@ -357,7 +357,9 @@ signatures, derives `meterAddr` and `acceptanceAddr` from `delivery.meter_key` a
 existing checks (image ID, `schemaId`, both hashes, obligation consumed once, ceiling,
 recipient) the escrow calls `RentFactsVerifier.verify(facts, journal)`, a view function
 pinned per `schemaId` the way the image ID is, which for every record and note:
-recomputes the digest as `sha256(tagged bytes)` over the bytes as carried, recovers the
+checks the blob's tag prefix (`warrant/usage/v1` for a record, `warrant/acceptance/v1`
+for a note) and its inner length, recomputes the digest as `sha256(blob)` over the bytes
+as carried, and recovers the
 signer with `v ∈ {27, 28}`, `s ≤ n/2` (EIP-2) and a zero address refused, compares it
 with the journal word for its kind; then recomputes `factsHash` over the signature-free
 bytes (format below) and requires equality with the journal. The verifier checks no
@@ -383,7 +385,7 @@ it did not disappear. *Who checks what, after 46:*
 | Signer recovery, low-s, `factsHash` equality (no index check: D1 keeps it) | — | Verifier, in `settle` |
 | Batch closure, late notes | Seller's ledger (SS-10), guardrail windows (BG-6) | Unchanged |
 
-*Formats* (normative copy and vectors in PE-9's fixtures, which Rust and Solidity
+*Formats* (normative copy and vectors in PE-9a's fixtures, `test/vectors/rent-facts-v1.json`, which Rust and Solidity
 must both pass, as `test/vectors/usage-gates.json` does for the gates): an address is
 `last20(keccak256(X_be32 ‖ Y_be32))` of the point the compressed policy key decodes to,
 without the SEC1 `0x04` prefix (Geth's `PubkeyToAddress`), and a key that does not
@@ -398,9 +400,9 @@ build that knows the option ignores `v`. `facts` is `u32_le n ‖ (u32_le len �
 ‖ sig_k) × n ‖ u32_le m ‖ (u32_le len ‖ note_k ‖ sig_k) × m`, records then notes in
 position order, where each `record_k` and `note_k` is its tagged bincode bytes as
 signed, `len` counts those bytes without the 65 of the signature, and trailing bytes
-are refused; `factsHash = sha256("warrant/facts-batch/v1" ‖ u32_le n ‖ (u32_le len ‖
-record_k) × n ‖ u32_le m ‖ (u32_le len ‖ note_k) × m)` with the tag written the way
-`hash_tagged` writes it, so the guest, which never sees the signatures, computes the
+are refused; with `body = u32_le n ‖ (u32_le len ‖ record_k) × n ‖ u32_le m ‖
+(u32_le len ‖ note_k) × m`, `factsHash = sha256(u64_le 22 ‖ "warrant/facts-batch/v1" ‖
+u64_le len(body) ‖ body)`, the framing of `tagged_bytes` over raw bytes, so the guest, which never sees the signatures, computes the
 same value and a re-randomised signature cannot change it. Records and notes become
 public calldata, where today only `deliveryHash` is; integration §6.3 states this.
 *Per chain:* where the signatures are verified is a deployment choice, not a protocol
@@ -432,12 +434,14 @@ measurements of PE-8 and DL-13 stay; 43 is not superseded: `settlement_margin_s`
 covers proving, the wrap, inclusion and finality and is set from PC-8 and PE-8, and
 whether a CPU prover suffices is what PC-8 measures. One formula:
 `G = challenge_timeout_s + settlement_margin_s`. New
-items: PE-9 (the PE-0 amendment: `v` in the signed objects of §3, the three journal
-words in §5, the `facts` argument, the verifier interface and its pinning in §6; the
-`RentFactsVerifier` contract with tests for a wrong key, a high-s signature, a zero
-recovery, a wrong binding, a truncated batch, a reordered batch, trailing bytes, a
-`facts` whose hash differs from the journal, and acceptance of batch 1 (indices 24 to
-47) and of a partial later batch; both images built from one guest source; attest-plus-settle
-gas on the Arc testnet for a 24-hour batch) and PC-8 (the bench flag). *Reversal:* drop
+items, each with a handoff brief in `docs/handoff/`: PC-8 (the bench: `ATTESTED=1`, the
+credential signature in all three modes, cycles and, on a prover host, proving time);
+PE-9a (standalone and unblocked: the formats and vectors in `core`, `--recoverable`
+signing, the `RentFactsVerifier` contract with tests for a wrong key, a high-s
+signature, a zero recovery, a note blob in the record section, a truncated batch, a
+reordered batch, trailing bytes, a `facts` whose hash differs, and acceptance of batch 1
+(indices 24 to 47) and of a partial later batch; gas on the Arc testnet); PE-9b (after
+PE-0's review, PE-3 and PE-6: the PE-0 amendment, `settle(seal, journal, facts)`, both
+images from one guest source, one batch settled end to end). *Reversal:* drop
 `facts` and the verifier call; the guest verifies signatures again and 44 and 45
 return; batches settled under 46 settle under 46's image and stay valid.
