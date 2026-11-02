@@ -410,11 +410,19 @@ constant. The escrow pins an image ID and a `schemaId` per order, so two images 
 from one guest source with the record and note signature check behind a feature:
 `signed-facts-in-guest` (today's path, D2 in the guest, 64-byte signatures, no
 `facts`) for chains where gas is dear, and `facts-in-settle` (46) where it is cheap.
-At EVM reference prices and ETH near $2,000, 46's extra 335k gas costs about $0.03 per
-daily batch at 0.04 gwei and about $3.40 at 5 gwei, against roughly $0.10 to $0.30 of
-CPU proving for the 7.9 M cycles it removes, so the break-even on Ethereum L1 is near
-0.3 gwei; on Arc and on L2s, where execution is near free and calldata goes to blobs,
-46 wins at any plausible price. Records, notes, gates and the rule tree are the same in
+Which image a chain gets is decided by measurement, not assumed: the additional chain
+fees of 46 per batch (PE-9a components, PE-9b's integrated difference) against the
+proving cost it removes (PC-8 on CPU, PE-8 on GPU, which shrinks the saving). An
+illustration only, from estimates: at EVM reference prices and ETH near $2,000, 46's
+estimated extra 335k gas costs about $0.03 per daily batch at 0.04 gwei and about
+$3.40 at 5 gwei, against an unmeasured estimate of $0.10 to $0.30 of CPU proving for
+the 7.9 M cycles it removes; on those estimates the Ethereum L1 break-even is near
+0.3 gwei. On Arc and on L2s the fee per gas is expected to be lower, but an L2 fee has
+several parts (L2 execution, publishing the data to L1, and on some stacks an operator
+fee; see the OP Stack fee documentation, docs.optimism.io/op-stack/transactions/fees),
+and blobs lower the data cost without removing it; 46 is expected to be cheaper there,
+and that expectation stays a hypothesis until the measurements above exist for the
+chain in question. Records, notes, gates and the rule tree are the same in
 both images; only `schemaId` and the journal's three words differ.
 *Alternatives:* (a) keep the checks in the guest: the prover stays the cost driver,
 with the GPU host and the margin of 43; (b) an attestation registry written in a

@@ -108,19 +108,25 @@ function verify(
 
 Algorithm, in order; one custom error per failure:
 
-1. Read `n`; require `n > 0`.
+1. Read `n`; require `n > 0`. Append `u32_le(n)` to the body buffer.
 2. For each of `n` records: read `len`, the blob, the 65-byte signature. Require the
    blob starts with `u64_le(16) ‖ "warrant/usage/v1"` and that the following `u64_le`
    equals `len − 32`. Recover the signer of `sha256(blob)`; require `v ∈ {27, 28}`,
    `s ≤ n/2`, signer `≠ 0` and signer `== meterAddr`. Append `u32_le(len) ‖ blob` to the
    body buffer.
-3. Read `m`; require `m > 0`. For each note, the same with the prefix
+3. Read `m`; require `m > 0`. Append `u32_le(m)` to the body buffer. For each note,
+   the same as step 2 (including appending `u32_le(len) ‖ blob`), with the prefix
    `u64_le(21) ‖ "warrant/acceptance/v1"`, inner length `len − 37`, and
    `acceptanceAddr`.
 4. Require the read offset equals `facts.length` (no trailing bytes) and every read stays
    in bounds.
 5. Require `sha256(u64_le(22) ‖ "warrant/facts-batch/v1" ‖ u64_le(len(body)) ‖ body)
    == factsHash`.
+
+Invariant, for implementation and tests: `body` is exactly `facts` with every 65-byte
+signature removed, the two counts and every length prefix kept, in the same order.
+`len(body) = len(facts) − 65 × (n + m)`. Add a test that builds `body` this way and
+compares it with the buffer the verifier hashes.
 
 `meterAddr == acceptanceAddr` is valid: in v1 one guardrail key fills both roles
 (decision 25). The tag prefix check costs little and stops a note blob from standing
@@ -158,15 +164,26 @@ guest gates (D1, D5) and are tested there.
 
 ### 5.6 Gas
 
-Measure `verify` alone for 1, 6, 24 and 168 hours, locally (Foundry gas report) and on
-Arc testnet (deploy with a script; one call per size; report `gasUsed` from the receipt
-and the fee in USDC).
+This package measures components. It does not measure `settle`'s added cost: that is
+the difference between `settle` with `facts` and the existing `settle`, measured in one
+integrated path in PE-9b. Do not add standalone numbers together and report the sum as
+the increment: the Groth16 verification is already in the baseline, and separate
+transactions each carry their own transaction overhead.
 
-Also measure separately on Arc testnet one call to RISC Zero's Groth16 verifier contract
-(`risc0-ethereum`, the version this repository already uses) with any valid RISC Zero
-Groth16 receipt. The invoice receipt from the repository's validation runs is
-acceptable. Report the sum as the estimate of `settle`'s added cost. A combined
-measurement waits for a real receipt of the 46 guest (PC-8, PE-9b).
+For 1, 6, 24 and 168 hours, locally (Foundry) and on Arc testnet (deploy with a script;
+one transaction per size), report three numbers separately:
+
+| Column | How |
+|---|---|
+| `verify` execution gas | a harness contract calls `verify` and records `gasleft()` before and after; excludes the transaction base cost and the calldata |
+| calldata gas of `facts` | from the byte content of `facts` under the chain's calldata pricing; state the pricing used |
+| transaction `gasUsed`, and the fee in USDC | from the receipt of the harness transaction; includes the base cost, so it is not the increment |
+
+As a baseline reference only, also measure on Arc testnet one call to RISC Zero's
+Groth16 verifier contract (`risc0-ethereum`, the version this repository already uses)
+with any valid RISC Zero Groth16 receipt; the invoice receipt from the repository's
+validation runs is acceptable. Report it in its own row. It is not part of the
+increment, because `settle` pays it today.
 
 For comparison with decision 44 (one meter signature over the batch): add a test-only
 harness, not shipped, that recovers 1 batch signature plus `m` note signatures over the
@@ -179,9 +196,11 @@ never put them in the pull request.
 ## 6. Done when
 
 - The draft pull request has 5.1 to 5.5 with all tests passing in CI.
-- The pull request description has the gas table: per size, local gas, Arc testnet gas,
-  Arc testnet fee; the Groth16 call; the decision-44 harness for 24 hours; the contract
-  addresses and transaction hashes on Arc testnet.
+- The pull request description has the component gas table of 5.6: per size, local and
+  Arc testnet, the three columns reported separately; the Groth16 call in its own row
+  as a baseline reference; the decision-44 harness for 24 hours; the contract
+  addresses and transaction hashes on Arc testnet. It states that the increment to
+  `settle` is not measured here (PE-9b).
 - Nothing in `WarrantEscrow`, the guest, the journal or PE-0 changes.
 
 ## 7. Out of scope (PE-9b)
