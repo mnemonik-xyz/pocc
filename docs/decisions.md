@@ -69,6 +69,7 @@ handoff (`docs/handoff/`).
 | 43 | 2026-11-02 | The pilot's prover is a GPU host with RISC Zero's CUDA prover; the CPU prover is for development and the Groth16 wrap; batches are daily; `settlement_margin_s = 1800` assumes the GPU until PE-8 and DL-13 measure it | Taken, with the owner | Lease evidence §4, §4c, ME-8; PE-0 §2.1; compute-rent §8; integration §10, §11 | A CPU prover: a 2.5 h margin, batches of at most about 6 h, about $1.30 per VM-day, no VM below about $10 a day |
 | 44 | 2026-11-02 | One meter signature over the batch's records (`warrant/usage-batch-signed/v1`) replaces the per-record signatures in the proof; the per-hour records and the notes' binding are unchanged; the guest accepts either form (D2); the guardrail re-signs at batch close (BG-7) | Taken, with the owner | PE-0 §3, §4; lease evidence 5a.2, 5a.3, 5a.5, BG-7, DL-14; `pkg/adapter/warrant`, `pocc-verify` | Per-record signatures only: 16.2 M cycles per daily batch instead of 9.0 M |
 | 45 | 2026-11-02 | The batch is signed from the hourly records persisted at each hour's signing, never from records regenerated from the receipt; the grace is `G = 2 × challenge_timeout_s + M` with `M` budgeted for the per-record fallback proof; DL-13 and PE-8 measure verified succinct and Groth16 receipts, in both signature forms, under concurrent load | Taken | Lease evidence 5a.2, 5a.5, BG-7, DL-13; `pkg/adapter/warrant`, `pkg/lease`, `bench/rent-guest` | Sign regenerated records (a receipt re-run could change what was signed); budget `G` for the fast path only (the fallback then misses the deadline) |
+| 46 | 2026-11-02 | Signature verification of the rent case moves from the guest to Solidity: a per-chain `FactsAttestor` recovers the meter and acceptance keys from the records and notes with `ecrecover`, checks each note's binding to its record, and stores `H(records ‖ notes)` per `obligation_id`; the guest takes the same records and notes as attested facts (a fourth provenance kind), runs gates D4–D9 and the rule tree, and commits `factsHash`; `WarrantEscrow.settle` requires the attestor's hash to equal the journal's. Amends 40 (the escrow gains one address and one equality, stays proof-only otherwise); 43, 44 and 45 are superseded if 46 is taken: no batch signature, no `M`, no fallback proof, the CPU prover suffices | Proposed, awaits the owner; PE-0 §3, §5 and a new attestor section to specify | Integration §6.2 steps 10–11, §6.3, §7, PE-9, PC-8; PE-0; `pkg/adapter/warrant`; `bench/rent-guest`; `WarrantEscrow` | Additive to the contract: remove the attestor and the settle check, the guest verifies signatures again, 44 and 45 return; batches attested under 46 stay valid under 46's image |
 
 ## Decisions in full
 
@@ -324,3 +325,43 @@ persisted `usage-<k>.json` files and refuses a differing regenerated record;
 `G = 2 × challenge_timeout_s + M` and `M` is sized for the per-record proof; the
 benchmark proves succinct, wraps to Groth16 and verifies both, with a `load N` mode;
 PE-8 and DL-13 say so. *Reversal:* per row.
+
+**46 Signature verification in Solidity, a simpler guest.** *Found by:* the question of
+2 Nov, why secp256k1 signatures are verified inside the zkVM when `ecrecover` is cheap.
+*Measured and estimated:* per hour of service 363,155 cycles, of which one k256
+verification is about 330,000; a daily batch 9,034,772 cycles, extrapolated to 4,672 s
+on the measured Mac (`docs/measurements.md`). On chain, at EVM reference prices:
+25 × 3,000 for `ecrecover`, about 150 each for `sha256`, about 5.5 kB of calldata at 16
+per byte, together about 165k gas, less than the Groth16 verification `settle` already
+pays; Arc's prices are not measured. Guest after 46, estimated: about 30,000 cycles per
+hour (hashing) plus the O(1) batch checks, below the invoice guest; to be measured with
+an `ATTESTED=1` flag in `bench/rent-guest` (PC-8) before the owner decides. *Design:*
+steps 1 to 9 of integration §6.2 are unchanged: the guardrail still signs record k and
+note k hour by hour, the seller still challenges and still serves hour k+1 against
+note k. Step 10 splits: the worker submits the batch's records and notes to the
+`FactsAttestor`, which recomputes each digest over the tagged bytes, recovers the
+signer, compares it with `meter_key` and `acceptance_key` from the order, checks
+`note_k.record_hash == hash(record_k)` and the indices, and stores
+`attested[obligation_id] = H(records ‖ notes)`; then the worker proves with the guest,
+which receives the same records and notes unsigned, marked attested, and commits
+`factsHash` over them in the journal. Step 11 adds one check to `settle`:
+`attestor.attested(obligationId) == journal.factsHash`. The fact invariant holds: the
+evaluator trusts an attested fact only because the escrow refuses every journal whose
+`factsHash` the attestor has not stored; the provenance check moved, it did not
+disappear. Signatures must carry the recovery id (65 bytes) or the contract tries
+both; `sign-usage` (PE-4) changes accordingly. Records and notes become public
+calldata, where today only `deliveryHash` is; integration §6.3 states this.
+*Alternatives:* (a) keep the checks in the guest: the prover stays the cost driver,
+with the GPU host and the 1,800 s margin of 43; (b) no guest for the rent case, gates
+and rule tree in Solidity, about 200k gas and no proving at all: rejected for v1
+because the rent gates would leave the proved evaluator and the proof-only symmetry
+of 40, kept as the fallback if Groth16 verification on Arc proves too costly.
+*Consequences:* 43 (GPU prover, margin), 44 (batch signature) and 45 (`M`, the
+fallback proof) are superseded if 46 is taken; they are not reversed until the
+measurement confirms the estimate. New items: PE-9 (the PE-0 amendment: recovery id
+in §3, the `factsHash` word in §5, an attestor section with the interface, the replay
+domain per `obligation_id` and the settle check; the `FactsAttestor` contract with
+tests for a wrong key, a wrong binding, a repeated `obligation_id` and a truncated
+batch; a gas measurement on the Arc testnet) and PC-8 (the bench flag). *Reversal:*
+remove the attestor and the settle check; the guest verifies signatures again and 44
+and 45 return; batches attested under 46 settle under 46's image and stay valid.
