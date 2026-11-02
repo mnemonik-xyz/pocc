@@ -39,7 +39,7 @@ The extrapolation assumes proving time proportional to cycles at 283 µs per cyc
 which the recursion tree makes roughly true above one segment; it is an estimate
 until DL-13 runs on a prover host.
 
-Still to measure (PE-7, DL-13): a real proof of the rent guest on a CPU prover host
+Still to measure (PE-8, DL-13): a real proof of the rent guest on a CPU prover host
 and on a GPU prover (RISC Zero CUDA), with proof time, wrap time, peak memory and the
 host's price per hour, for batches of 1, 6, 24 and 168 hours; the settlement margin
 follows from them. The GPU result decides whether VMs below about $10 a day can be
