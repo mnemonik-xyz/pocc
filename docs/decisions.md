@@ -67,6 +67,7 @@ handoff (`docs/handoff/`).
 | 41 | 2026-11-02 | The state machine of lease evidence 5a.5 is modelled in `pkg/lease` and the DL-11 scenarios run as tests; the model found that a full batch must settle before its own `deadline(b)`, not at the lease's end, so the worker settles each batch as it closes | Taken | `pkg/lease`, SS-4 | None |
 | 42 | 2026-11-02 | The seller's challenge carries the amount its own verifier expects; a note below it is underpayment for delivered service and stops the lease after that piece, while a zero note for an outage the seller saw itself continues. Amounts are bounded (2^62) and every sum is checked | Taken | `pkg/lease`, lease evidence 5a.5 | Leave the gate to PC-3 and let the model continue on any note |
 | 43 | 2026-11-02 | The pilot's prover is a GPU host with RISC Zero's CUDA prover; the CPU prover is for development and the Groth16 wrap; batches are daily; `settlement_margin_s = 1800` assumes the GPU until PE-8 and DL-13 measure it | Taken, with the owner | Lease evidence §4, §4c, ME-8; PE-0 §2.1; compute-rent §8; integration §10, §11 | A CPU prover: a 2.5 h margin, batches of at most about 6 h, about $1.30 per VM-day, no VM below about $10 a day |
+| 44 | 2026-11-02 | One meter signature over the batch's records (`warrant/usage-batch-signed/v1`) replaces the per-record signatures in the proof; the per-hour records and the notes' binding are unchanged; the guest accepts either form (D2); the guardrail re-signs at batch close (BG-7) | Taken, with the owner | PE-0 §3, §4; lease evidence 5a.2, 5a.3, 5a.5, BG-7, DL-14; `pkg/adapter/warrant`, `pocc-verify` | Per-record signatures only: 16.2 M cycles per daily batch instead of 9.0 M |
 
 ## Decisions in full
 
@@ -299,3 +300,15 @@ PE-0's range extension), which halves the work and is still open; a rented provi
 service. *Outcome:* the GPU is the planned prover in every document; the figures for
 it are published rates (100 kHz to 1 MHz), not measurements, until PE-8. *Reversal:*
 per row.
+
+**44 One meter signature per batch.** *Owner's words:* "adopt one meter signature over
+a batch too." *Measured:* a daily batch is 9,034,772 cycles with the batch signature
+and 16,196,163 without (44 % less); 363,155 cycles per hour of service, the note
+signature and hashing, plus 337,000 fixed. *Design:* the hourly flow is unchanged (the
+guardrail still signs record k with note k, so the seller has evidence hour by hour);
+at batch close the guardrail signs the same records once as a list; the guest verifies
+that one signature and recomputes each `hash(record_k)` for the notes' binding; a
+guardrail that will not re-sign is non-cooperation and the seller falls back to the
+per-record signatures it holds. *Alternatives:* one note per batch (breaks per-hour
+billing and the challenge); aggregate signatures (not in the zkVM accelerator set).
+*Reversal:* drop `batch_signature`; nothing else changes.
