@@ -64,6 +64,7 @@ handoff (`docs/handoff/`).
 | 38 | 2026-11-02 | Batches close once; a late note is refused; the guardrail sets note windows so none expires inside an unfinished batch (BG-6); the seller keeps a settled/held/open reservation ledger (SS-10) | Taken | Lease evidence 5a.5, SS-10, SS-11, BG-6 | Per-hour obligations on chain (contract change) |
 | 39 | 2026-11-02 | Gates D4 to D9 have a Go reference (`warrant.Decide`) and shared decision vectors (`test/vectors/usage-gates.json`) that Warrant's `authorize_meter` must match | Taken | `pkg/adapter/warrant`, DL-12 | None |
 | 40 | 2026-11-02 | The rent case settles through the framework interface (C): journal v2 with `schemaId` on `WarrantEscrow`, proof only; PE-0 (`policy-execution/docs/handoff/04-rent-interface-v1.md`) is its specification. Interface A (invoice journal as-is) is superseded; B (invoice journal plus delivery words on `ProofInvoiceEscrow`) is not for production and is not implemented | Chosen by the owner; PE-0's text awaits review | Lease evidence §5, integration §7, §10 | Implement B as a pilot bridge, thrown away at C |
+| 41 | 2026-11-02 | The state machine of lease evidence 5a.5 is modelled in `pkg/lease` and the DL-11 scenarios run as tests; the model found that a full batch must settle before its own `deadline(b)`, not at the lease's end, so the worker settles each batch as it closes | Taken | `pkg/lease`, SS-4 | None |
 
 ## Decisions in full
 
@@ -266,3 +267,12 @@ but a throwaway image and contract patch); A (cannot carry `deliverySpecHash`, s
 escrow cannot check the delivery spec the buyer approved). *Outcome:* PE-0 written
 against the framework design; the pocc side needs no artifact change; phase D waits for
 framework steps 2 and 3. *Reversal:* implement B.
+
+**41 The state machine as code.** *Why:* the auditor's point that the DL-11 simulation
+is the evidence for approving the state machine, not something to approve first. The
+model is the seller's side only: a ledger with `settled`, `held`, `open` and `lost`,
+pieces that are provisional until the gate for them passes, one open challenge at a
+time, batches that close once, `deadline(b)` from the policy. *Found by the model:*
+the exposure test first settled every batch at the lease's end and the model refused
+it, because deadline(b) of an early batch passes long before; SS-4's "when full" is
+not optional. *Reversal:* none; the model follows the specification.

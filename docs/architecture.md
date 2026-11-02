@@ -223,6 +223,7 @@ length-prefixed (see [deviations](#8-deviations-from-the-spec)).
 | `cmd/*` | `pocc-agent`, `pocc-notary`, `pocc-verify`, `pocc-broker` | Done; smoke-tested locally against real drand |
 | `internal/sim` | Simulated acceptance tests T1, T3, T4, T6–T9 plus Stage 0 and policy checks | Done; T6 is Warrant gate D5 on the usage record |
 | `pkg/openstack` | Minimal OpenStack client for the broker | Done; used in the 2026-10-28 live test (pre-escrow fixtures, kept as history) |
+| `pkg/lease` | The seller's lease state machine and reservation ledger of lease evidence 5a.5 and 5a.6: provisional pieces, the challenge timeout, batches that close once, `deadline(b)`, SS-10; the DL-11 scenarios as tests | Done (PC-5); the service that drives it is PC-3 |
 | `pkg/adapter/warrant` | The only package that knows Warrant's shapes: policy check, usage records as Warrant JSON, external signer | Done (PC-1, PC-2); awaits Warrant's `sign-usage` and `check rent` |
 
 ## 7a. One mode: the policy decides the proof

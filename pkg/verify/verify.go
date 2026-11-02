@@ -324,6 +324,11 @@ func UsageRecords(R *pocc.Receipt, v pocc.Verdict, sign func(any) (string, error
 	}
 	meterSpec := pocc.Hex(msh)
 	last := Covered(R, info, start)
+	for h := range v.PerHourS { // a credited hour is always covered
+		if t, err := time.Parse(time.RFC3339, h); err == nil && int64(t.Sub(start)/time.Hour) > last {
+			last = int64(t.Sub(start) / time.Hour)
+		}
+	}
 	if lastHour := int64(end.Sub(start)/time.Hour) - 1; last > lastHour {
 		last = lastHour
 	}
