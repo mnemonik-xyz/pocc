@@ -453,8 +453,9 @@ and `sign-acceptance --recoverable`, new options, while the 64-byte default and
 `core::verify` stay as they are, so no built image or consumer changes; the signing
 bytes are the existing `tagged_bytes(warrant/usage/v1, record)` and the note's tag, so
 no signed object changes; only `settle` consumes the 65-byte form, the guest of 46
-receives no record or note signature, and the native `warrant-host check rent` of a
-build that knows the option ignores `v`. `facts` is `u32_le n ‖ (u32_le len ‖ record_k
+receives no record or note signature. Native full-facts verification must enforce the same
+`v`, low-s, recovery and hash checks as Solidity; it cannot ignore `v` in this mode.
+The existing 64-byte verification path remains separate. `facts` is `u32_le n ‖ (u32_le len ‖ record_k
 ‖ sig_k) × n ‖ u32_le m ‖ (u32_le len ‖ note_k ‖ sig_k) × m`, records then notes in
 position order, where each `record_k` and `note_k` is its tagged bincode bytes as
 signed, `len` counts those bytes without the 65 of the signature, and trailing bytes
