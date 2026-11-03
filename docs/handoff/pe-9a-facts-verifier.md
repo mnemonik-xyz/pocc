@@ -1,6 +1,8 @@
 # Handoff PE-9a: the settle-side signature verifier, standalone
 
-Status: ready to execute. Blocked by nothing technical. Needs push access to
+Status: on hold, 3 Nov 2026. The owner must choose the priority of this buyer-note mode versus the dispute mechanism.
+Do not start production integration or treat this handoff as the dispute verifier.
+Execution also needs push access to
 `mnemonik-xyz/policy-execution`, an Arc testnet RPC endpoint and a deployer key funded
 with testnet USDC (Arc pays gas in USDC).
 Repository: `mnemonik-xyz/policy-execution`. Work branch: `pe-9a/rent-facts-verifier`.
@@ -18,6 +20,12 @@ recomputes `factsHash`.
 This package builds that verifier and its byte formats as a standalone, tested contract,
 and measures its gas on Arc testnet. It does not touch `WarrantEscrow`, the guest or
 PE-0's text; that is PE-9b, which waits for PE-0's review and framework steps 2 and 3.
+
+Scope: the existing mode requires both meter records and buyer notes.
+The [dispute mechanism](https://github.com/mnemonik-xyz/policy-execution/pull/77) cannot require a fresh buyer note.
+Its [PoCC handoff](https://github.com/mnemonik-xyz/pocc/pull/2) proposes independent evidence and different authorization semantics.
+Keep `m > 0` in this format. Allowing zero notes is not a safe substitute for that new interface.
+If the owner prioritizes disputes, this package remains deferred; meter-only Solidity verification needs a separate schema review.
 
 ## 2. Read first
 
@@ -42,6 +50,12 @@ policy. If any check fails, the transaction reverts; nothing is stored. Therefor
 not add field checks, index checks or binding checks in Solidity. They would duplicate
 the guest, and the index check in particular is wrong here: indices are lease-wide
 (batch 1 of a daily batch carries 24 to 47).
+
+The standalone zkVM receipt authenticates neither the record nor the note signatures in this mode.
+It commits to their content and expected signer addresses. The credential signature stays in the guest.
+Consumers must check both the receipt and matching facts, or authenticate finalized settlement through the correctly pinned escrow/verifier.
+Schema and image pinning distinguish this mode from `signed-facts-in-guest`; unknown pairs must be rejected.
+Expose receipt validity separately from fact authentication and payment finality in host and indexer outputs.
 
 ## 4. Byte formats (exact)
 
@@ -110,6 +124,8 @@ Algorithm, in order; one custom error per failure:
 
 1. Read `n`; require `n > 0`. Append `u32_le(n)` to the body buffer.
 2. For each of `n` records: read `len`, the blob, the 65-byte signature. Require the
+   declared `len >= 32` before subtraction or prefix/inner-length reads. Check every read in bounds before reading.
+   Otherwise revert with a custom malformed-record error, not an arithmetic panic. Require the
    blob starts with `u64_le(16) ‖ "warrant/usage/v1"` and that the following `u64_le`
    equals `len − 32`. Recover the signer of `sha256(blob)`; require `v ∈ {27, 28}`,
    `s ≤ n/2`, signer `≠ 0` and signer `== meterAddr`. Append `u32_le(len) ‖ blob` to the
@@ -117,7 +133,8 @@ Algorithm, in order; one custom error per failure:
 3. Read `m`; require `m > 0`. Append `u32_le(m)` to the body buffer. For each note,
    the same as step 2 (including appending `u32_le(len) ‖ blob`), with the prefix
    `u64_le(21) ‖ "warrant/acceptance/v1"`, inner length `len − 37`, and
-   `acceptanceAddr`.
+   `acceptanceAddr`. Require `len >= 37` before subtraction or reading the prefix and inner length.
+   Use a custom malformed-note error for a short blob.
 4. Require the read offset equals `facts.length` (no trailing bytes) and every read stays
    in bounds.
 5. Require `sha256(u64_le(22) ‖ "warrant/facts-batch/v1" ‖ u64_le(len(body)) ‖ body)
@@ -158,9 +175,14 @@ wrong `meterAddr`; wrong `acceptanceAddr`; high-s (replace `s` with `n − s` an
 records swapped (signatures valid, `factsHash` differs); a note blob in the record
 section with `meterAddr == acceptanceAddr` (tag check); an inner `u64_le` length that
 disagrees with `len`; `factsHash` off by one bit.
+Add declared lengths 0 and 31 for records, and 0 and 36 for notes; each must return its custom error without an arithmetic panic.
 
 Do not test a wrong note binding, a gap in indices or a wrong amount here. Those are
 guest gates (D1, D5) and are tested there.
+
+PE-9b must also test consumers: a valid receipt plus missing, invalid or mismatched facts is not authenticated delivery.
+The same receipt with matching valid facts can authenticate evidence, but it still cannot bypass live escrow bounds or replay checks.
+Reject a receipt presented under the wrong image/schema mode even if its journal decodes.
 
 ### 5.6 Gas
 
@@ -169,6 +191,11 @@ the difference between `settle` with `facts` and the existing `settle`, measured
 integrated path in PE-9b. Do not add standalone numbers together and report the sum as
 the increment: the Groth16 verification is already in the baseline, and separate
 transactions each carry their own transaction overhead.
+
+Decision 46 now accounts for 13,184 bytes of `facts` for a daily batch, including signing tags and framing.
+Its approximately 362k/269k figures are incomplete component models, not measured transaction gas or upper bounds.
+Retain all records in the batch-signature comparison. Freeze that harness's encoding before comparing its measurements.
+State the chain's active gas rules, including calldata floors where applicable, and count actual zero and nonzero bytes.
 
 For 1, 6, 24 and 168 hours, locally (Foundry) and on Arc testnet (deploy with a script;
 one transaction per size), report three numbers separately:
