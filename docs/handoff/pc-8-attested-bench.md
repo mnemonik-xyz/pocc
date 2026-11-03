@@ -1,6 +1,8 @@
 # Handoff PC-8: measure the rent guest with no record or note signatures
 
 Status: ready to execute. Blocked by nothing.
+Scope: comparative experiment for decision 46's existing buyer-note mode, not implementation acceptance for the dispute mechanism.
+The dispute guest has different evidence and authorization semantics and needs its own benchmark.
 Repository: `mnemonik-xyz/pocc`. Base branch: `docs/decision-46-signatures-in-solidity`.
 Work branch: `bench/pc-8-attested`. Open a draft pull request into the base branch.
 
@@ -18,6 +20,9 @@ measured numbers only. This package produces those numbers for the guest side:
   batch in all three forms.
 
 The second half of 46 (gas on chain) is PE-9a, a separate handoff. Do not do it here.
+PE-9a is on hold until the owner selects the mode's implementation priority.
+An `attested` benchmark receipt proves computation over unsigned records and notes; it does not authenticate their signatures by itself.
+Label receipt validity separately from authenticated facts. Do not present the benchmark as an end-to-end payment proof.
 
 ## 2. Read first
 

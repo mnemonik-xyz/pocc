@@ -333,20 +333,51 @@ facts to the order's keys, a registry open to blocking and overwrite, the settle
 margin wrongly removed, checks without an owner, gas counted for 25 recoveries instead
 of 48, formats unspecified); the review's own suggestion, verification in the settle
 transaction, removes the first two.
+
+*Scope, updated 3 Nov:* this decision concerns the existing buyer-note rent mode.
+It does not implement the [dispute mechanism](https://github.com/mnemonik-xyz/policy-execution/pull/77).
+That mechanism needs delivery evidence without a fresh buyer note; [pocc #2](https://github.com/mnemonik-xyz/pocc/pull/2) defines its integration.
+PE-9a and PE-9b are on hold until the owner chooses the implementation priority for these modes.
+PC-8 can remain a comparative experiment for the existing mode. Its results do not measure the new dispute guest.
+Do not enable the dispute path by accepting `m = 0` in this schema.
+The dispute authorization, billing eligibility and witness require a separate versioned interface.
+
 *Measured and estimated:* per hour of service 363,155 cycles with the batch signature
 and 674,352 without, of which each k256 verification is about 330,000; a daily batch
 9,034,772 cycles, which the extrapolation of `docs/measurements.md` puts at about
 2,641 s with the wrap on the measured Mac (the 4,672 s there is the 16.2 M-cycle path).
 Guest after 46, estimated: about 30,000 cycles per hour of hashing, one credential
 signature and the O(1) batch checks, about 1.1 M cycles for a daily batch, below the
-invoice guest; PC-8 measures it before the owner decides. On chain, at EVM reference
-prices (EIP-1108, EIP-2028): 48 recoveries at 3,000, about 7,000 for the 48 `sha256`
-calls, 8,208 bytes of records and notes plus 48 × 65 bytes of signatures, about 11.5 kB
-of calldata with framing at 16 per byte, together about 335k gas added to `settle`,
-which roughly doubles its cost next to the Groth16 verification; Arc's prices are not
-measured (PE-9a). With decision 44 kept (one meter signature per batch, 25 recoveries and
-no record signatures in calldata) the addition is about 210k gas; 46 takes the simpler
-form, per-hour signatures only, and lets PE-9a's measurement reopen that choice.
+invoice guest; PC-8 measures it before the owner decides.
+
+The earlier 335k/210k gas estimates omitted signing-tag bytes and understated the batch-signature alternative.
+The following accounting corrects those omissions for 24 records and 24 notes:
+
+| Component | Bytes or gas |
+|---|---:|
+| Bincode record / note | 185 / 157 bytes |
+| Record signing frame / note signing frame | 32 / 37 bytes |
+| Tagged record / tagged note | 217 / 194 bytes |
+| All tagged blobs | `24 * (217 + 194) = 9,864` bytes |
+| Two counts and 48 lengths | `8 + 48 * 4 = 200` bytes |
+| 48 signatures | `48 * 65 = 3,120` bytes |
+| Encoded `facts` | **13,184 bytes** |
+| Calldata component at 16 gas per byte | 210,944 gas |
+| 48 recoveries at 3,000 gas | 144,000 gas |
+| Previous provisional hashing allowance | 7,000 gas |
+| Sum of these components | **361,944 gas, approximately 362k** |
+
+This is not measured gas or a transaction upper bound. The hashing allowance needs measurement.
+The model excludes the outer function ABI, memory, parsing, calls, other execution costs and chain-specific pricing.
+Zero bytes reduce the ordinary calldata component; transaction floors can change the total.
+Where applicable, account for [EIP-7623](https://eips.ethereum.org/EIPS/eip-7623).
+PE-9a measures components; PE-9b measures the integrated settlement difference against its baseline.
+
+For a comparison with decision 44, retain every record in calldata and replace 24 record signatures with one batch signature.
+Assuming otherwise unchanged framing, the payload is `13,184 - 23 * 65 = 11,689` bytes.
+Then `11,689 * 16 + 25 * 3,000 + 7,000 = 269,024` gas, approximately 269k for those components.
+The aggregate signature encoding and hash workload still need specification and measurement in the test harness.
+This estimate does not change the normative per-record format of decision 46.
 *Design:* steps 1 to 9 of integration §6.2 are unchanged: the guardrail still signs
 record k and note k hour by hour, the seller still challenges and still serves hour k+1
 against note k, the batch still closes once in the seller's ledger (SS-10). Step 10:
@@ -372,7 +403,22 @@ after the first. Nothing is stored; a transaction that fails any check reverts a
 fact invariant holds: the evaluator trusts a record or a note only because the same
 transaction that pays has recovered its signer against the addresses the evaluator
 derived from the pinned policy; the provenance check moved into the settle transaction,
-it did not disappear. *Who checks what, after 46:*
+it did not disappear.
+
+*Standalone-proof guarantee:* a `facts-in-settle` receipt proves evaluation over records and notes whose signatures the guest did not check.
+It binds their bytes through `factsHash` and binds their expected signing addresses through the pinned policy.
+The credential signature remains checked in the guest. Record and note authentication requires the additional facts verification.
+Receipt validity alone is neither authenticated delivery evidence nor permission to pay.
+
+Consumers must identify the mode from the pinned `(imageId, schemaId)` pair. Unknown or mismatched pairs must fail closed.
+For `facts-in-settle`, an off-chain consumer must verify the receipt and the exact matching facts under the specified recovery and hash rules.
+Alternatively, it can verify finalized successful settlement through an approved escrow with the correct pinned verifier and matching claim.
+An unverified event, a submitted transaction or a receipt without facts is insufficient.
+The host and indexers must distinguish receipt validity, authenticated facts and finalized payment.
+A second contract cannot treat this receipt as standalone signed-evidence authorization.
+For `signed-facts-in-guest`, record and note authentication is part of the proved computation; live payment checks still remain external.
+
+*Who checks what, after 46:*
 
 | Check | Today | After 46 |
 |---|---|---|
@@ -406,23 +452,23 @@ u64_le len(body) ‖ body)`, the framing of `tagged_bytes` over raw bytes, so th
 same value and a re-randomised signature cannot change it. Records and notes become
 public calldata, where today only `deliveryHash` is; integration §6.3 states this.
 *Per chain:* where the signatures are verified is a deployment choice, not a protocol
-constant. The escrow pins an image ID and a `schemaId` per order, so two images coexist
+constant. Each escrow deployment pins an image ID and a `schemaId`, so two images coexist across deployments
 from one guest source with the record and note signature check behind a feature:
 `signed-facts-in-guest` (today's path, D2 in the guest, 64-byte signatures, no
 `facts`) for chains where gas is dear, and `facts-in-settle` (46) where it is cheap.
 Which image a chain gets is decided by measurement, not assumed: the additional chain
 fees of 46 per batch (PE-9a components, PE-9b's integrated difference) against the
 proving cost it removes (PC-8 on CPU, PE-8 on GPU, which shrinks the saving). An
-illustration only, from estimates: at EVM reference prices and ETH near $2,000, 46's
-estimated extra 335k gas costs about $0.03 per daily batch at 0.04 gwei and about
-$3.40 at 5 gwei, against an unmeasured estimate of $0.10 to $0.30 of CPU proving for
-the 7.9 M cycles it removes; on those estimates the Ethereum L1 break-even is near
-0.3 gwei. On Arc and on L2s the fee per gas is expected to be lower, but an L2 fee has
-several parts (L2 execution, publishing the data to L1, and on some stacks an operator
-fee; see the OP Stack fee documentation, docs.optimism.io/op-stack/transactions/fees),
-and blobs lower the data cost without removing it; 46 is expected to be cheaper there,
-and that expectation stays a hypothesis until the measurements above exist for the
-chain in question. Records, notes, gates and the rule tree are the same in
+illustration only: assume ETH costs $2,000 and use the incomplete 361,944-gas component model above.
+Those components cost about $0.029 at 0.04 gwei, or $3.62 at 5 gwei.
+Assuming $0.10 to $0.30 of CPU proving savings gives a component-only break-even range of roughly 0.14 to 0.41 gwei.
+Neither the ETH price nor the proving savings is a current measured price claim.
+Do not quote a single 0.3-gwei deployment threshold from this illustration.
+GPU savings and the full settlement difference can change the comparison.
+On Arc and L2s, cheaper verification remains a hypothesis until measured.
+L2 fees can include execution, L1 data and operator fees; blobs do not remove data costs.
+See the [OP Stack fee documentation](https://docs.optimism.io/op-stack/transactions/fees).
+Records, notes, gates and the rule tree are the same in
 both images; only `schemaId` and the journal's three words differ.
 *Alternatives:* (a) keep the checks in the guest: the prover stays the cost driver,
 with the GPU host and the margin of 43; (b) an attestation registry written in a
@@ -444,7 +490,7 @@ whether a CPU prover suffices is what PC-8 measures. One formula:
 `G = challenge_timeout_s + settlement_margin_s`. New
 items, each with a handoff brief in `docs/handoff/`: PC-8 (the bench: `ATTESTED=1`, the
 credential signature in all three modes, cycles and, on a prover host, proving time);
-PE-9a (standalone and unblocked: the formats and vectors in `core`, `--recoverable`
+PE-9a (standalone, on hold for the mode-priority decision: the formats and vectors in `core`, `--recoverable`
 signing, the `RentFactsVerifier` contract with tests for a wrong key, a high-s
 signature, a zero recovery, a note blob in the record section, a truncated batch, a
 reordered batch, trailing bytes, a `facts` whose hash differs, and acceptance of batch 1
