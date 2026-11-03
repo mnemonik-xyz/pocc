@@ -35,6 +35,8 @@ Provisioning and receipt of access credentials do not establish delivery of futu
 If the intended product pays the full escrow at VM handover, define a separate handover predicate before implementation.
 
 Proposed pilot evidence authority: a meter agreed by both parties and independent of both signing services.
+The buyer records the proposed key before funding. Before accepting the order, the provider must approve that meter and its evidence-access commitments.
+The provider must refuse terms whose meter, delivery predicate or retention promises it cannot accept.
 It runs the verifier and signs records and billing eligibility under a key fixed before funding.
 It must deliver the evidence to the provider without a new buyer signature.
 This profile trusts the meter. It is not a trust-free proof of physical compute.
@@ -79,7 +81,7 @@ No wallet private key or cloud credential belongs in a public receipt or evidenc
 6. Build one canonical claim and compute the expected amount from the policy and evidence.
 7. Send the buyer a typed settlement acknowledgement request. Retry the same request idempotently.
 8. Check any returned signature and claim against the expected amount and fixed terms.
-9. Submit acknowledgement settlement immediately when it is valid. A signature is not a confirmed payment.
+9. Submit acknowledgement settlement from the funded recipient account only after accepting its exact amount and closure terms.
 10. If no valid acknowledgement has settled by `proof_after(batch)`, check on-chain consumption and start the prover.
 11. Verify the resulting receipt locally against the pinned image and journal before submission.
 12. Check consumption again and submit proof settlement before the deadline.
@@ -87,6 +89,16 @@ No wallet private key or cloud credential belongs in a public receipt or evidenc
 
 An acknowledgement received during proving can still settle. Cancel queued work when safe; running work can be wasted.
 The contract's shared replay check resolves any submission race.
+Acknowledgement settlement requires `msg.sender == order.recipient` in the contract, even for zero or reduced amounts.
+The buyer and third-party relayers cannot consume the obligation using only a buyer signature.
+Proof settlement remains permissionless after timeout and pays only the fixed recipient.
+A provider contract wallet must call through its authorized execution path. An unrelated operator EOA cannot submit directly.
+Relayed acknowledgements require a future, separately reviewed provider countersignature; this version does not support them.
+
+A buyer signature is an offer until the provider submits it. The signature alone is not a reservation or a confirmed payment.
+Rejected or invalid offers cannot reset the response period, set a terminal cutoff, change spend or consume the batch.
+Check the full journal, including evidence hash, amount, prefix and cutoff, before signing the provider transaction.
+Do not use the worker's amount check as a substitute for the contract's caller check.
 Never redirect the recipient or automatically deduct proof costs from the buyer's funded ceiling.
 The provider bears those costs unless a separately agreed policy explicitly prices them.
 
@@ -94,6 +106,8 @@ The provider bears those costs unless a separately agreed policy explicitly pric
 
 Keep hourly `challenge_timeout_s` for service continuation.
 Add separate `ack_timeout_s` for batch settlement response.
+Reject zero piece sizes, non-positive periods and periods not exactly divisible by `piece_s` before calculating the number of pieces.
+Require aligned service start, a supported positive batch size, and checked index/deadline arithmetic without truncation.
 The proof gate uses the funded schedule, not a provider-supplied message timestamp:
 
 ```text
@@ -110,6 +124,10 @@ A non-responsive buyer still triggers service shutdown under the existing contin
 Completed eligible service remains claimable; provisional work remains unbillable.
 Future service cannot be paid merely because escrow remains funded.
 Final-prefix closure records a terminal lease cutoff shared by both paths and deployments.
+The acknowledgement path requires both the buyer signature and provider submission for that final prefix.
+It records their agreement; it does not independently prove physical shutdown. The provider must stop before accepting the cutoff.
+The proof path instead authenticates the stop and eligible prefix through the guest's evidence checks.
+Reject a cutoff below the shared registry's highest settled index.
 
 ## 6. Lease model changes
 
@@ -136,7 +154,7 @@ Recompute economic exposure with failed proofs, meter outages and the fallback s
 | Buyer integration | Display and sign the versioned batch acknowledgement; distinguish it from hourly continuation |
 | Batch builder | Build the same closed claim for both paths from persisted evidence |
 | Lease model | Held fallback reservations, expiry and exact-once reconciliation |
-| Settlement worker | Signature-first submission, proof scheduling after timeout, pinned-image verification, race/reorg handling |
+| Settlement worker | Provider-authorized acknowledgement submission, permissionless proof settlement after timeout, pinned-image verification, race/reorg handling |
 | Benchmark | New fallback witness and guest; CPU/GPU latency, concurrent queueing and both transaction paths |
 
 Policy-execution owns the authoritative encodings and shared fixtures.
@@ -148,12 +166,18 @@ Decisions affected if this mode is adopted:
 - 25/35: buyer-controlled metering cannot guarantee settlement against that buyer's silence; independent evidence adds a different trust boundary.
 - 36/42: retain service stopping on absent or insufficient continuation, but allow proof recovery for eligible delivered service.
 - 38/41/45: retain closed batches, persistence and bounded accounting; distinguish response time from proof margin.
-- 40: add a specific buyer-authorized fast path for the new rent mode. Existing proof-only orders remain unchanged.
+- 40: add a buyer-authorized, provider-accepted fast path for the new rent mode. Existing proof-only orders remain unchanged.
 - 43: benchmark the new fallback guest before selecting prover capacity.
 - 44/46: do not require buyer notes or batch re-signing on a path intended to work without them.
   Optional Solidity verification of independent meter signatures requires a separate interface review.
 
 Do not mark these decisions Taken merely because this draft exists.
+
+Implementation priority: PE-9a and PE-9b of decision 46 are on hold for the owner's mode-priority decision.
+They target the existing buyer-note mode, not this dispute mode. PC-8 can remain a comparative experiment for that earlier mode.
+If disputes are selected first, keep PE-9a/PE-9b deferred and benchmark the new independent-evidence guest.
+Do not treat `m = 0` as a compatible extension of decision 46; the authorization and eligibility witness also change.
+Stacking this PR on #1 is a documentation dependency, not an approval to implement both modes together.
 
 ## 8. Acceptance evidence
 
@@ -164,16 +188,25 @@ Existing checks run on 3 Nov 2026:
 
 Required new scenarios:
 
-1. Buyer signs; no proof is generated; one payment finalizes.
+1. Buyer signs and provider submits the exact accepted claim; no proof is generated; one payment finalizes.
 2. Buyer is entirely offline after funding; first eligible completed piece settles through independent evidence.
 3. Buyer refuses only the final release signature; existing evidence is still usable.
 4. Missing or forged independent evidence never pays on timeout alone.
 5. Acknowledgement and proof race in both orders; one obligation and one payment.
-6. A lower-value acknowledgement is refused by the worker; it is not accepted as a partial top-up mechanism.
+6. Buyer submits zero or one unit for a fully delivered batch: contract rejects; a later full proof can still settle.
 7. A stopped lease settles a final prefix; provisional service and later suffix never pay.
 8. Crash during challenge, closure, signing, proof and submission; restart preserves commitments and balances.
 9. Proof failure, retries, deadline boundary, refund and reorg; Held is retained until the outcome is known.
 10. No buyer secret or signing endpoint is available during the full fallback test.
+11. Buyer submits a one-piece final prefix while later delivered batches are unpaid: contract rejects; no cutoff or payment state changes.
+12. A relayer copies a valid buyer signature: acknowledgement submission fails without a provider caller.
+13. Provider deliberately accepts a reduced or zero amount: it closes once, with no later top-up.
+14. Provider contract-wallet execution succeeds; an unrelated operator's direct submission fails.
+15. Repeated rejected offers cannot restart the clock or change reservations; proof remains permissionless after timeout.
+16. Non-divisible schedules and overflowing counts are refused before service starts.
+
+The worker must refuse automatic acceptance of underpayment. An explicit provider concession remains possible.
+The contract caller check prevents hostile submission; the worker check only prevents the provider from accepting by mistake.
 
 Local model tests do not replace a real proved and funded testnet settlement.
 The final acceptance report must identify the trusted meter and exactly what delivery property it attested.

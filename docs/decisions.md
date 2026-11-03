@@ -79,6 +79,9 @@ or provider-submitted proof after a response period. The owner named it the disp
 Existing contracts provide reusable signature/proof payment mechanics, but the current rent witness still depends on buyer signatures.
 The draft preserves service batches and proposes independently available delivery evidence.
 Those two business assumptions remain for review. No existing decision is silently marked superseded.
+Acknowledgement settlement now requires the funded provider as caller, in addition to the buyer signature.
+Buyer-only underpayment or cutoff submissions must leave the obligation unchanged. Proof settlement remains permissionless after timeout.
+Decision 46's PE-9a/PE-9b are on hold until the owner selects mode priority; their buyer-note format is not the dispute witness.
 
 ## Decisions in full
 
