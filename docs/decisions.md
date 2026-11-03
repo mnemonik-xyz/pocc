@@ -71,6 +71,15 @@ handoff (`docs/handoff/`).
 | 45 | 2026-11-02 | The batch is signed from the hourly records persisted at each hour's signing, never from records regenerated from the receipt; the grace is `G = 2 × challenge_timeout_s + M` with `M` budgeted for the per-record fallback proof; DL-13 and PE-8 measure verified succinct and Groth16 receipts, in both signature forms, under concurrent load | Taken | Lease evidence 5a.2, 5a.5, BG-7, DL-13; `pkg/adapter/warrant`, `pkg/lease`, `bench/rent-guest` | Sign regenerated records (a receipt re-run could change what was signed); budget `G` for the fast path only (the fallback then misses the deadline) |
 | 46 | 2026-11-02 | Signature verification of the rent case moves from the guest to Solidity, in the settle transaction: `WarrantEscrow.settle(seal, journal, facts)` hands `facts` (the batch's records and notes with their 65-byte signatures, index order) to a stateless `RentFactsVerifier` pinned per `schemaId` beside the image ID; it recomputes each digest, recovers the signer (low-s, no zero address), compares it with the `meterAddr` and `acceptanceAddr` words of the journal, and recomputes `factsHash` over the signature-free bytes, which must equal the journal's. The guest derives the two addresses from the policy's keys, keeps the nine pre-gate checks except the two signature checks, D1 and D3–D9, the credential signature and the rule tree, and commits `factsHash`, `meterAddr`, `acceptanceAddr`. No registry, no attestation state. Amends 40 (the escrow gains `facts` and one verifier call); the mode is a per-chain choice by `schemaId`, two images from one guest source. Supersedes 44 and, of 45, the re-signing wait and the fallback proof if taken; persisted records and 43's margin stay, `G = challenge_timeout_s + settlement_margin_s` | Proposed, awaits the owner; revised 2 Nov twice after the reviews of PR #1 | Integration §6.2 steps 10–11, §6.3, §7, PE-9a, PE-9b, PC-8; handoffs `docs/handoff/`; PE-0 §3, §5, §6; `pkg/adapter/warrant`; `bench/rent-guest`; `WarrantEscrow` | Additive to the contract: drop `facts` and the verifier call, the guest verifies signatures again, 44 and 45 return; batches settled under 46 stay valid under 46's image |
 
+## Pending request: dispute mechanism
+
+On 3 Nov 2026 the owner requested payment on the buyer's delivery acknowledgement,
+or provider-submitted proof after a response period. The owner named it the dispute mechanism. See the
+[change specification](handoff/dispute-mechanism.md).
+Existing contracts provide reusable signature/proof payment mechanics, but the current rent witness still depends on buyer signatures.
+The draft preserves service batches and proposes independently available delivery evidence.
+Those two business assumptions remain for review. No existing decision is silently marked superseded.
+
 ## Decisions in full
 
 Entries 01–14 are the PoC's own; 15–25 are the integration's.

@@ -1,5 +1,9 @@
 # PoCC × Warrant integration — Spec v0.1
 
+Proposed amendment, 3 Nov 2026: [dispute mechanism](handoff/dispute-mechanism.md).
+It records the requested settlement change, existing code reuse and the independent-evidence requirement.
+The baseline below is retained; the new mode is not implemented.
+
 Status: v0.1 reviewed by the owner on 2026-10-29; decisions D-A to D-H taken (see
 `docs/decisions.md`, entries 15–25). The owner's review notes and the answers are in
 the Claude doc "Proof of Cloud Compute (PoCC) — PoC spec", tab "Warrant integration
