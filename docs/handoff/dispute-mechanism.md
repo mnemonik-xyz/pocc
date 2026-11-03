@@ -49,7 +49,9 @@ While the development anchor is in use, a refutation also rests on the notary's 
 The agent runs inside the buyer's machine. The buyer can stop it, block it, or read its key (architecture §2a, decision 47).
 The buyer cannot change anchored evidence: the notary keeps the first entry for each agent and sequence number.
 A hostile buyer can therefore stop future evidence only. The provider watches the agent every slot and stops the machine after `liveness_miss_slots` slots (lease evidence SS-12).
-The fallback pays only for time with anchored heartbeats. The listing states this.
+With the extracted key, the buyer can also submit a signed but malformed heartbeat. The notary accepts it, and a receipt that includes it is `INVALID`.
+The provider therefore checks each entry's contents, keeps the last valid receipt prefix, builds records from that prefix only, and stops on a failed entry (SS-12, SS-13).
+The fallback pays only for billing-eligible pieces, and inside them only for time with valid anchored heartbeats. The listing states this.
 A sidecar that the buyer cannot stop, and an observer, are research for a later improvement (`docs/research-sidecar-observer.md`).
 The existing Stage 0 property table remains applicable.
 
@@ -89,7 +91,9 @@ The worker must compare final evidence with its persisted expected claim before 
 On observed conflicting final statements, retain them and stop automatic settlement and service. Do not select whichever version pays most or arrives first.
 Run `pocc-verify` on the receipt that each statement binds. A statement that does not follow from its receipt is the meter's fault; record that result with both statements.
 This identifies the fault. It does not authorize a payment.
-When the liveness watch stops the lease, the terminal stop statement records that stop, with the last piece that has anchored heartbeats as its cutoff.
+When the liveness watch stops the lease, the terminal stop statement records that stop.
+Its cutoff comes from authenticated billing eligibility: the last piece that passed the continuation gate. Heartbeats measure delivery inside eligible pieces only.
+A provisional next piece with valid heartbeats is not eligible and never moves the cutoff.
 Keep pending reservations Held until an authorized outcome or existing expiry/loss classification.
 
 These are trusted-meter operating rules. A guest cannot detect an undisclosed conflicting signature elsewhere.
@@ -250,6 +254,8 @@ Required new scenarios:
 25. Buyer signs a different entry for an anchored sequence number with the extracted key: the notary refuses it; the claim does not change.
 26. Buyer signs an early final heartbeat: credit ends there, the provider stops, and the terminal stop statement records the cutoff.
 27. Meter signs a record that does not follow from its bound receipt: the provider's verifier run detects it; automatic settlement stops and both results are kept.
+28. Buyer submits a signed but malformed heartbeat after a valid prefix (wrong round, wrong beacon value, broken chain link, or an entry after a final heartbeat): the provider stops at once; the full receipt is `INVALID`; the last valid prefix verifies and gives the same records for completed pieces.
+29. The next piece runs provisionally with valid heartbeats, its continuation is never authorized, and the machine stops: the cutoff is the last eligible piece, and the provisional piece is not paid.
 
 The worker must refuse automatic acceptance of underpayment. An explicit provider concession remains possible.
 The contract caller check prevents hostile submission through either path; worker and guest checks prevent acceptance of interim or inconsistent evidence.

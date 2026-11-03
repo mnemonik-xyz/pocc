@@ -129,9 +129,12 @@ under-credit. The record binds the receipt hash, so the provider's own verifier 
 detects a false record at once; settlement still trusts the signature.
 
 A malicious buyer can also stop the agent inside its own machine, block it, or read its
-key. That stops evidence for later slots only: the notary keeps the first entry for each
-agent and sequence number, and the provider stores every anchored entry within one slot.
-The provider watches the agent every slot and stops the machine after
+key. With the key it can also submit a signed but malformed heartbeat, which the notary
+accepts and which makes a receipt that includes it `INVALID`. That stops evidence for later
+slots only: the notary keeps the first entry for each agent and sequence number, the
+provider stores every anchored entry within one slot, and records come from the last valid
+receipt prefix. The provider checks each entry's contents, stops on a failed one, and stops
+the machine after
 `liveness_miss_slots` slots without an anchored heartbeat, with
 `liveness_miss_slots × 60 s ≤ challenge_timeout_s`, so `E` stays the bound (lease
 evidence SS-12, SS-13; decision 47).
@@ -447,7 +450,7 @@ beside the escrow, never inside it, and ends in one of the escrow's existing mov
 | Provider's receipt omits anchored entries | Tenant | Yes | The tenant's guardrail stored the entries and proofs of every hour before it signed that hour's note (lease evidence BG-5). Arc holds roots only; nothing withheld by the provider's notary can be rebuilt from a root |
 | Overbilling (`E_OVERBILL`), forged or replayed heartbeats, wrong image | — | No | Not paid by construction; nothing to resolve |
 | Unanchored heartbeats (notary down or hostile) | Provider | No | Delivery is defined as anchored delivery; the provider chooses and can run its notary |
-| Tenant stops, blocks or changes the agent, or signs an early final heartbeat with its key | Provider | No | Anchored slots stay credited and cannot be replaced; later slots have no evidence. The provider's liveness watch stops the machine (decision 47) |
+| Tenant stops, blocks or changes the agent, or signs an early final or malformed heartbeat with its key | Provider | No | Anchored valid slots stay credited and cannot be replaced; records come from the last valid receipt prefix; later slots have no evidence. The provider's liveness watch stops the machine (decision 47) |
 | Meter signs a record that does not follow from its bound receipt | Provider or tenant | Detectable; no remedy in v1 | The verifier is deterministic over the receipt the record binds; re-running it identifies the fault. Settlement trusts the signature until X-1 |
 | VM slow or unresponsive while heartbeats continue | Tenant | No, in Stage 0 | PoCC proves liveness, not performance; Stage 1 spot checks address it |
 
@@ -588,7 +591,7 @@ widening of the Verus claim, golden vectors changed only on purpose.
 | PC-7 (future) | Referee dispute object, `pocc-broker dispute open|resolve`, referee re-execution, anchored dispute; a disputed hour gets its own obligation | Decision 20 reversed | — |
 | PC-6 | Batch builder: `pocc-broker batch` assembles `MeterInput` JSON (notes, records, credential) for `warrant-host prove rent` | PE-4, PC-3 | A batch proves and settles on Arc testnet (ME-3 for a PoCC batch) |
 | PC-8 (proposed, decision 46) | Brief `docs/handoff/pc-8-attested-bench.md`. `ATTESTED=1` in `bench/rent-guest`, with the credential signature added to all three modes: the guest takes records and notes without signatures, keeps the credential signature, the pre-gate checks, D1 and D3–D9 and the hashing, derives `meterAddr` and `acceptanceAddr` from the policy keys and commits them with `factsHash`; cycles and proving time for batches of 1, 6, 24 and 168 hours beside the two signed forms in `docs/measurements.md` | Decision 46 proposed | Cycles per hour with no record or note signature in the guest measured, not estimated; proving time on the CPU prover, so `settlement_margin_s` and "CPU suffices" rest on numbers; the owner decides 46 on them |
-| PC-9 (decision 47) | Liveness watch and evidence custody: `pocc-broker watch` reads the notary's entries for the lease's agent after every slot, stores each anchored entry with its inclusion proof within one slot, and sends Stopping to `pkg/lease` after `liveness_miss_slots` consecutive slots without an anchored heartbeat inside the bracket, or on a final heartbeat before `service_end`; `pkg/lease` gains the liveness stop as a Stopping cause; the adapter refuses a policy with `liveness_miss_slots × 60 s > challenge_timeout_s` | PC-5; PC-4 for the Arc anchor (the dev anchor is enough for tests) | Lease evidence DL-15 as tests: agent stopped mid-hour, network blocked, early final heartbeat, a different entry for an anchored sequence number refused, a notary outage shorter than the limit; loss at most `E` in each |
+| PC-9 (decision 47) | Liveness watch and evidence custody: `pocc-broker watch` reads the notary's entries for the lease's agent after every slot, checks each new entry with the verifier against the stored valid prefix, keeps the last valid receipt prefix, stores each anchored entry with its inclusion proof within one slot, and sends Stopping to `pkg/lease` after `liveness_miss_slots` consecutive slots without an anchored heartbeat inside the bracket, or on a final heartbeat before `service_end`, or on an entry that fails the content check; `pkg/receipt` gains a prefix assembly that never includes a failed entry; `pkg/lease` gains the liveness stop as a Stopping cause; the adapter refuses a policy with `liveness_miss_slots × 60 s > challenge_timeout_s` | PC-5; PC-4 for the Arc anchor (the dev anchor is enough for tests) | Lease evidence DL-15 as tests: agent stopped mid-hour, network blocked, early final heartbeat, a different entry for an anchored sequence number refused, a notary outage shorter than the limit, a signed malformed heartbeat after a valid prefix (the full receipt is `INVALID`, the prefix receipt verifies and gives the same records for completed pieces), a provisional next piece with valid heartbeats followed by shutdown (not billable); loss at most `E` in each |
 
 Decision 46 applies to the buyer-note mode. The [dispute mechanism](https://github.com/mnemonik-xyz/policy-execution/pull/77) needs a different witness and authorization interface.
 PE-9a and PE-9b wait for the owner to decide which mode to prioritize. PC-8 can continue as a comparative experiment only.

@@ -70,7 +70,7 @@ handoff (`docs/handoff/`).
 | 44 | 2026-11-02 | One meter signature over the batch's records (`warrant/usage-batch-signed/v1`) replaces the per-record signatures in the proof; the per-hour records and the notes' binding are unchanged; the guest accepts either form (D2); the guardrail re-signs at batch close (BG-7) | Taken, with the owner | PE-0 §3, §4; lease evidence 5a.2, 5a.3, 5a.5, BG-7, DL-14; `pkg/adapter/warrant`, `pocc-verify` | Per-record signatures only: 16.2 M cycles per daily batch instead of 9.0 M |
 | 45 | 2026-11-02 | The batch is signed from the hourly records persisted at each hour's signing, never from records regenerated from the receipt; the grace is `G = 2 × challenge_timeout_s + M` with `M` budgeted for the per-record fallback proof; DL-13 and PE-8 measure verified succinct and Groth16 receipts, in both signature forms, under concurrent load | Taken | Lease evidence 5a.2, 5a.5, BG-7, DL-13; `pkg/adapter/warrant`, `pkg/lease`, `bench/rent-guest` | Sign regenerated records (a receipt re-run could change what was signed); budget `G` for the fast path only (the fallback then misses the deadline) |
 | 46 | 2026-11-02 | Buyer-note mode only. Signature verification of the rent case moves from the guest to Solidity, in the settle transaction: `WarrantEscrow.settle(seal, journal, facts)` hands `facts` (the batch's records and notes with their 65-byte signatures, index order) to a stateless `RentFactsVerifier` pinned per `schemaId` beside the image ID; it recomputes each digest, recovers the signer (low-s, no zero address), compares it with the `meterAddr` and `acceptanceAddr` words of the journal, and recomputes `factsHash` over the signature-free bytes, which must equal the journal's. The guest derives the two addresses from the policy's keys, keeps the nine pre-gate checks except the two signature checks, D1 and D3–D9, the credential signature and the rule tree, and commits `factsHash`, `meterAddr`, `acceptanceAddr`. No registry, no attestation state. Amends 40 (the escrow gains `facts` and one verifier call); the mode is a per-chain choice by `schemaId`, two images from one guest source. Supersedes 44 and, of 45, the re-signing wait and the fallback proof if taken; persisted records and 43's margin stay, `G = challenge_timeout_s + settlement_margin_s` | Proposed. PE-9a and PE-9b on hold pending mode priority; PC-8 is comparative only. Updated 3 Nov after review | Integration §6.2 steps 10–11, §6.3, §7, PE-9a, PE-9b, PC-8; handoffs `docs/handoff/`; PE-0 §3, §5, §6; `pkg/adapter/warrant`; `bench/rent-guest`; `WarrantEscrow` | Additive to the contract: drop `facts` and the verifier call, the guest verifies signatures again, 44 and 45 return; batches settled under 46 stay valid under 46's image |
-| 47 | 2026-11-03 | The agent runs in the tenant's machine, so the tenant can stop it, block it or read its key; no rule prevents that. The seller watches the agent every slot (lease evidence SS-12): `liveness_miss_slots` consecutive slots without an anchored heartbeat, or an early final heartbeat, stop the lease; `liveness_miss_slots × 60 s ≤ challenge_timeout_s`, so `E` stays the bound; the seller stores every anchored entry within one slot (SS-13) and uses a notary that keeps the first entry per agent and sequence number; the listing states the rule. Usage records bind their receipt hash, so a false record is detected by the seller's own verifier run and refutable by anyone; settlement still trusts the meter's signature until X-1 | Taken, with the owner, 3 Nov; the last-piece rule (pro rata or D6) stays open; sidecar and observer kept as research | Lease evidence 5a.4, 5a.5, SS-12, SS-13, DL-15; integration §3, §8.1, §10 PC-9, §11; architecture §1, §2a; dispute handoffs; `pkg/lease`, `pocc-broker` | Drop the watch: the seller's loss for a stopped agent returns to the challenge timeout of `E`; anchored evidence is unaffected |
+| 47 | 2026-11-03 | The agent runs in the tenant's machine, so the tenant can stop it, block it or read its key; no rule prevents that. The seller watches the agent every slot (lease evidence SS-12): `liveness_miss_slots` consecutive slots without a valid anchored heartbeat, an early final heartbeat, or an entry that fails the verifier's content check stop the lease; records come from the last valid receipt prefix, and the dispute-mode cutoff comes from billing eligibility, not heartbeats; `liveness_miss_slots × 60 s ≤ challenge_timeout_s`, so `E` stays the bound; the seller stores every anchored entry within one slot (SS-13) and uses a notary that keeps the first entry per agent and sequence number; the listing states the rule. Usage records bind their receipt hash, so a false record is detected by the seller's own verifier run and refutable by anyone; settlement still trusts the meter's signature until X-1 | Taken, with the owner, 3 Nov; the last-piece rule (pro rata or D6) stays open; sidecar and observer kept as research | Lease evidence 5a.4, 5a.5, SS-12, SS-13, DL-15; integration §3, §8.1, §10 PC-9, §11; architecture §1, §2a; dispute handoffs; `pkg/lease`, `pocc-broker` | Drop the watch: the seller's loss for a stopped agent returns to the challenge timeout of `E`; anchored evidence is unaffected |
 
 ## Pending request: dispute mechanism
 
@@ -525,19 +525,31 @@ tenant has full control of that machine. It can stop the agent, block its networ
 read the agent key from memory and sign with it. Stage 0 cannot prevent this, and Stage 1
 as specified does not either. The tenant cannot change anchored evidence: the notary keeps
 the first entry for each agent and sequence number and refuses a different one
-(`pkg/notary`, `ErrFork`), and the verifier's fork check reads that log. A heartbeat signed
-with an extracted key is still a valid heartbeat, so it can only add credit; an early
-final heartbeat ends credit. *Decision (option A of the review):* do not try to force the
+(`pkg/notary`, `ErrFork`), and the verifier's fork check reads that log. The extracted key
+can still damage the receipt. The notary checks only the signature and the sequence of an
+entry, not its contents, so it accepts a correctly signed but malformed heartbeat (a wrong
+round, a wrong beacon value, a broken chain link, an entry after a final heartbeat).
+`pkg/receipt.Assemble` includes every entry, and the verifier then marks the whole receipt
+`INVALID`, which gives zero usage records. The earlier prefix still verifies: anchored
+evidence is not erased, but a receipt that includes the bad entry is unusable (review of
+3 Nov, reproduced). *Decision (option A of the review):* do not try to force the
 agent to run; make stopping it end the lease. The seller reads the notary's entries every
-slot. When `liveness_miss_slots` consecutive slots (default 5) have no anchored heartbeat
-inside the bracket, or a final heartbeat arrives before `service_end`, the lease goes to
-Stopping (lease evidence SS-12). The seller keeps `liveness_miss_slots × 60 s ≤
+slot and checks each new entry's contents with the verifier before it counts as liveness.
+When `liveness_miss_slots` consecutive slots (default 5) have no valid anchored heartbeat
+inside the bracket, or a final heartbeat arrives before `service_end`, or an entry fails
+the content check, the lease goes to Stopping (lease evidence SS-12). The seller keeps the
+last valid receipt prefix: the longest run of entries from the boot proof that verifies
+with no error code. Usage records and settlement use that prefix only, never a receipt
+that includes a failed entry (SS-13). The seller keeps `liveness_miss_slots × 60 s ≤
 challenge_timeout_s`, so `E` of lease evidence 5a.5 stays the single bound on its loss.
 The seller stores every anchored entry and its inclusion proof within one slot (SS-13),
 and uses a notary that it can read and that keeps the first entry. The listing states that
 disabling, blocking or changing the agent ends the lease and that time without anchored
 heartbeats is not paid. In the dispute mode, the terminal stop statement records a stop
-of this kind, with the last piece that has anchored heartbeats as its cutoff.
+of this kind. Its cutoff comes from authenticated billing eligibility, never from
+heartbeats: the last piece that passed the continuation gate. Heartbeats measure delivery
+inside eligible pieces only. A provisional next piece can have valid heartbeats and still
+be unbillable.
 *Detection, credited:* each usage record binds its receipt hash (`deliverable_hash`), and
 `pocc-verify` is deterministic, so the seller's own verifier run detects a false or
 conflicting record at once and anyone can refute it from the kept receipt. That is

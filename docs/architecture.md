@@ -99,15 +99,23 @@ What the tenant cannot do:
 - It cannot change anchored evidence. The notary keeps the first entry for each agent and
   sequence number and refuses a different one (`ErrFork`). The verifier's fork check
   reads the same log.
-- It cannot reduce credit for anchored slots with the extracted key. A heartbeat signed
-  with that key is still a valid heartbeat, so it can only add credit. An early final
-  heartbeat ends credit from that point on, as stopping the agent does.
+- It cannot make the earlier prefix invalid. The receipt over the entries up to the last
+  valid one still verifies.
 
-Therefore a tenant that disables the agent stops the evidence for later slots only.
-The seller watches the agent every slot and stops the machine after
-`liveness_miss_slots` slots without an anchored heartbeat (Warrant lease evidence
-SS-12). It stores every anchored entry within one slot (SS-13). Time without anchored
-heartbeats is never paid.
+What the tenant can do with the extracted key, besides stopping the agent:
+
+- It can submit a correctly signed but malformed heartbeat. The notary checks only the
+  signature and the sequence, not the contents, so it accepts the entry. A receipt that
+  includes it is `INVALID` and gives zero usage records.
+- It can sign an early final heartbeat, which ends credit from that point on.
+
+Therefore the seller checks each new entry with the verifier before it counts as
+liveness, keeps the last valid receipt prefix, and builds usage records from that prefix
+only. It stops the machine on a failed entry, an early final heartbeat, or
+`liveness_miss_slots` slots without a valid anchored heartbeat (Warrant lease evidence
+SS-12). It stores every anchored entry within one slot (SS-13). Time without valid
+anchored heartbeats is never paid, and heartbeats inside a provisional piece are not
+billable by themselves.
 
 The usage record that the meter signs binds the receipt hash, and the verifier is
 deterministic. The seller's own verifier run therefore detects a false record at once,
