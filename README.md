@@ -30,6 +30,10 @@ anchors, credits only unbroken time, and writes hourly usage records that Warran
 escrow checks the provider's notes against. PoCC has no mode of its own: it runs
 when the executed policy names it as the delivery proof.
 
+The agent runs in the tenant's VM, so the tenant can stop it. That ends the evidence
+for later slots, not for anchored ones; the seller watches the agent every slot and
+stops the machine ([decision 47](docs/decisions.md)).
+
 ## Components
 
 | Binary | Role |

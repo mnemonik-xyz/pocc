@@ -70,6 +70,7 @@ handoff (`docs/handoff/`).
 | 44 | 2026-11-02 | One meter signature over the batch's records (`warrant/usage-batch-signed/v1`) replaces the per-record signatures in the proof; the per-hour records and the notes' binding are unchanged; the guest accepts either form (D2); the guardrail re-signs at batch close (BG-7) | Taken, with the owner | PE-0 §3, §4; lease evidence 5a.2, 5a.3, 5a.5, BG-7, DL-14; `pkg/adapter/warrant`, `pocc-verify` | Per-record signatures only: 16.2 M cycles per daily batch instead of 9.0 M |
 | 45 | 2026-11-02 | The batch is signed from the hourly records persisted at each hour's signing, never from records regenerated from the receipt; the grace is `G = 2 × challenge_timeout_s + M` with `M` budgeted for the per-record fallback proof; DL-13 and PE-8 measure verified succinct and Groth16 receipts, in both signature forms, under concurrent load | Taken | Lease evidence 5a.2, 5a.5, BG-7, DL-13; `pkg/adapter/warrant`, `pkg/lease`, `bench/rent-guest` | Sign regenerated records (a receipt re-run could change what was signed); budget `G` for the fast path only (the fallback then misses the deadline) |
 | 46 | 2026-11-02 | Buyer-note mode only. Signature verification of the rent case moves from the guest to Solidity, in the settle transaction: `WarrantEscrow.settle(seal, journal, facts)` hands `facts` (the batch's records and notes with their 65-byte signatures, index order) to a stateless `RentFactsVerifier` pinned per `schemaId` beside the image ID; it recomputes each digest, recovers the signer (low-s, no zero address), compares it with the `meterAddr` and `acceptanceAddr` words of the journal, and recomputes `factsHash` over the signature-free bytes, which must equal the journal's. The guest derives the two addresses from the policy's keys, keeps the nine pre-gate checks except the two signature checks, D1 and D3–D9, the credential signature and the rule tree, and commits `factsHash`, `meterAddr`, `acceptanceAddr`. No registry, no attestation state. Amends 40 (the escrow gains `facts` and one verifier call); the mode is a per-chain choice by `schemaId`, two images from one guest source. Supersedes 44 and, of 45, the re-signing wait and the fallback proof if taken; persisted records and 43's margin stay, `G = challenge_timeout_s + settlement_margin_s` | Proposed. PE-9a and PE-9b on hold pending mode priority; PC-8 is comparative only. Updated 3 Nov after review | Integration §6.2 steps 10–11, §6.3, §7, PE-9a, PE-9b, PC-8; handoffs `docs/handoff/`; PE-0 §3, §5, §6; `pkg/adapter/warrant`; `bench/rent-guest`; `WarrantEscrow` | Additive to the contract: drop `facts` and the verifier call, the guest verifies signatures again, 44 and 45 return; batches settled under 46 stay valid under 46's image |
+| 47 | 2026-11-03 | The agent runs in the tenant's machine, so the tenant can stop it, block it or read its key; no rule prevents that. The seller watches the agent every slot (lease evidence SS-12): `liveness_miss_slots` consecutive slots without an anchored heartbeat, or an early final heartbeat, stop the lease; `liveness_miss_slots × 60 s ≤ challenge_timeout_s`, so `E` stays the bound; the seller stores every anchored entry within one slot (SS-13) and uses a notary that keeps the first entry per agent and sequence number; the listing states the rule. Usage records bind their receipt hash, so a false record is detected by the seller's own verifier run and refutable by anyone; settlement still trusts the meter's signature until X-1 | Taken, with the owner, 3 Nov; the last-piece rule (pro rata or D6) stays open | Lease evidence 5a.4, 5a.5, SS-12, SS-13, DL-15; integration §3, §8.1, §10 PC-9, §11; architecture §1, §2a; dispute handoffs; `pkg/lease`, `pocc-broker` | Drop the watch: the seller's loss for a stopped agent returns to the challenge timeout of `E`; anchored evidence is unaffected |
 
 ## Pending request: dispute mechanism
 
@@ -83,6 +84,7 @@ Both settlement paths require the funded provider as caller; acknowledgement als
 Buyer-only underpayment, competing proofs and cutoff submissions must leave the obligation unchanged.
 The meter commits final records and batches once, and one terminal stop statement per lease. Interim evidence cannot authorize a payment.
 Decision 46's PE-9a/PE-9b are on hold until the owner selects mode priority; their buyer-note format is not the dispute witness.
+Decision 47 applies to every rent mode: the seller's per-slot liveness watch and evidence custody bound what a buyer gains by stopping the agent.
 
 ## Decisions in full
 
@@ -513,3 +515,44 @@ PE-0's review, PE-3 and PE-6: the PE-0 amendment, `settle(seal, journal, facts)`
 images from one guest source, one batch settled end to end). *Reversal:* drop
 `facts` and the verifier call; the guest verifies signatures again and 44 and 45
 return; batches settled under 46 settle under 46's image and stay valid.
+
+**47 The tenant controls the agent; the seller watches it every slot.** *Found by:* the
+review of 3 Nov of the dispute mechanism, asking whether drand and the anchor already make
+the meter's statement checkable and whether the buyer can be stopped from switching the
+agent off. *Facts:* the agent runs inside the tenant's machine (architecture §1). The
+tenant has full control of that machine. It can stop the agent, block its network, or
+read the agent key from memory and sign with it. Stage 0 cannot prevent this, and Stage 1
+as specified does not either. The tenant cannot change anchored evidence: the notary keeps
+the first entry for each agent and sequence number and refuses a different one
+(`pkg/notary`, `ErrFork`), and the verifier's fork check reads that log. A heartbeat signed
+with an extracted key is still a valid heartbeat, so it can only add credit; an early
+final heartbeat ends credit. *Decision (option A of the review):* do not try to force the
+agent to run; make stopping it end the lease. The seller reads the notary's entries every
+slot. When `liveness_miss_slots` consecutive slots (default 5) have no anchored heartbeat
+inside the bracket, or a final heartbeat arrives before `service_end`, the lease goes to
+Stopping (lease evidence SS-12). The seller keeps `liveness_miss_slots × 60 s ≤
+challenge_timeout_s`, so `E` of lease evidence 5a.5 stays the single bound on its loss.
+The seller stores every anchored entry and its inclusion proof within one slot (SS-13),
+and uses a notary that it can read and that keeps the first entry. The listing states that
+disabling, blocking or changing the agent ends the lease and that time without anchored
+heartbeats is not paid. In the dispute mode, the terminal stop statement records a stop
+of this kind, with the last piece that has anchored heartbeats as its cutoff.
+*Detection, credited:* each usage record binds its receipt hash (`deliverable_hash`), and
+`pocc-verify` is deterministic, so the seller's own verifier run detects a false or
+conflicting record at once and anyone can refute it from the kept receipt. That is
+detection, not enforcement: settlement trusts the meter's signature (decision 35), there is
+no referee (decision 20), and while the development anchor is in use a refutation also
+rests on the notary's anchor key. Enforcement is X-1, which needs BLS verification of the
+drand rounds, the Arc anchor (PC-4) and a witness design. *Open:* whether the last piece of
+a lease that SS-12 stopped is paid pro rata over the time served, or keeps the coverage
+floor of D6 over the whole piece; until the owner decides, D6 applies unchanged.
+*Alternatives, deferred (option B):* (a) evidence from the cloud itself, for example a
+TLS-notarised record of the cloud API's instance state; it proves availability, not a
+running guest, and needs its own witness design; (b) an agent at a privilege level that
+the tenant's system cannot change (an SEV-SNP VMPL0 service, Intel TDX partitioning), with
+attestation; it needs Stage 1 and cloud support; (c) an observer that the seller runs;
+the tenant cannot stop it, but the seller could fake liveness, which returns the
+overbilling problem unless the observer is attested. *Work:* PC-9 (integration §10).
+*Reversal:* drop the watch and the custody rule; the seller's loss for a stopped agent
+returns to the challenge timeout of `E`; anchored evidence and existing records are
+unaffected.

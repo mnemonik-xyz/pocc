@@ -124,7 +124,16 @@ plus the challenge timeout and its shutdown latency at the hourly price, plus
 provisioning. It challenges for hour k after hour k ran, waits at most
 `challenge_timeout_s` for note k while hour k+1 runs, and stops if the note does not
 arrive; and anyone can re-run `pocc verify` on the public evidence and show the
-under-credit.
+under-credit. The record binds the receipt hash, so the provider's own verifier run
+detects a false record at once; settlement still trusts the signature.
+
+A malicious buyer can also stop the agent inside its own machine, block it, or read its
+key. That stops evidence for later slots only: the notary keeps the first entry for each
+agent and sequence number, and the provider stores every anchored entry within one slot.
+The provider watches the agent every slot and stops the machine after
+`liveness_miss_slots` slots without an anchored heartbeat, with
+`liveness_miss_slots × 60 s ≤ challenge_timeout_s`, so `E` stays the bound (lease
+evidence SS-12, SS-13; decision 47).
 
 ## 4. The rent policy
 
@@ -429,6 +438,8 @@ beside the escrow, never inside it, and ends in one of the escrow's existing mov
 | Provider's receipt omits anchored entries | Tenant | Yes | The tenant's guardrail stored the entries and proofs of every hour before it signed that hour's note (lease evidence BG-5). Arc holds roots only; nothing withheld by the provider's notary can be rebuilt from a root |
 | Overbilling (`E_OVERBILL`), forged or replayed heartbeats, wrong image | — | No | Not paid by construction; nothing to resolve |
 | Unanchored heartbeats (notary down or hostile) | Provider | No | Delivery is defined as anchored delivery; the provider chooses and can run its notary |
+| Tenant stops, blocks or changes the agent, or signs an early final heartbeat with its key | Provider | No | Anchored slots stay credited and cannot be replaced; later slots have no evidence. The provider's liveness watch stops the machine (decision 47) |
+| Meter signs a record that does not follow from its bound receipt | Provider or tenant | Detectable; no remedy in v1 | The verifier is deterministic over the receipt the record binds; re-running it identifies the fault. Settlement trusts the signature until X-1 |
 | VM slow or unresponsive while heartbeats continue | Tenant | No, in Stage 0 | PoCC proves liveness, not performance; Stage 1 spot checks address it |
 
 ### 8.2 The dispute object
@@ -568,6 +579,7 @@ widening of the Verus claim, golden vectors changed only on purpose.
 | PC-7 (future) | Dispute object, `pocc-broker dispute open|resolve`, referee re-execution, anchored dispute; a disputed hour gets its own obligation | Decision 20 reversed | — |
 | PC-6 | Batch builder: `pocc-broker batch` assembles `MeterInput` JSON (notes, records, credential) for `warrant-host prove rent` | PE-4, PC-3 | A batch proves and settles on Arc testnet (ME-3 for a PoCC batch) |
 | PC-8 (proposed, decision 46) | Brief `docs/handoff/pc-8-attested-bench.md`. `ATTESTED=1` in `bench/rent-guest`, with the credential signature added to all three modes: the guest takes records and notes without signatures, keeps the credential signature, the pre-gate checks, D1 and D3–D9 and the hashing, derives `meterAddr` and `acceptanceAddr` from the policy keys and commits them with `factsHash`; cycles and proving time for batches of 1, 6, 24 and 168 hours beside the two signed forms in `docs/measurements.md` | Decision 46 proposed | Cycles per hour with no record or note signature in the guest measured, not estimated; proving time on the CPU prover, so `settlement_margin_s` and "CPU suffices" rest on numbers; the owner decides 46 on them |
+| PC-9 (decision 47) | Liveness watch and evidence custody: `pocc-broker watch` reads the notary's entries for the lease's agent after every slot, stores each anchored entry with its inclusion proof within one slot, and sends Stopping to `pkg/lease` after `liveness_miss_slots` consecutive slots without an anchored heartbeat inside the bracket, or on a final heartbeat before `service_end`; `pkg/lease` gains the liveness stop as a Stopping cause; the adapter refuses a policy with `liveness_miss_slots × 60 s > challenge_timeout_s` | PC-5; PC-4 for the Arc anchor (the dev anchor is enough for tests) | Lease evidence DL-15 as tests: agent stopped mid-hour, network blocked, early final heartbeat, a different entry for an anchored sequence number refused, a notary outage shorter than the limit; loss at most `E` in each |
 
 Decision 46 applies to the buyer-note mode. The [dispute mechanism](https://github.com/mnemonik-xyz/policy-execution/pull/77) needs a different witness and authorization interface.
 PE-9a and PE-9b wait for the owner to decide which mode to prioritize. PC-8 can continue as a comparative experiment only.
@@ -614,7 +626,8 @@ its outputs are JSON shapes that PE-3 fixes.
 | Rent guest proving cost: 363,155 zkVM cycles per hour of service with one meter signature per batch (decision 44), 674,352 without (`docs/measurements.md`); a daily batch is 9.0 M cycles, about 43 min on the one CPU prover measured | Prices VMs below about $5 a day out on a CPU | The pilot's prover is a GPU (decision 43): published RISC Zero rates put a daily batch at 9 s to 90 s; PE-8 and DL-13 measure it before the batch size and `settlement_margin_s` are set; the 80 s wrap is the fixed cost per batch, so batches are daily. Decision 46 (proposed) moves the record and note signature checks into the settle transaction: about 330,000 of the 363,155 cycles per hour are one k256 verification, which `ecrecover` does for 3,000 gas, with an incomplete approximately 362k-gas component estimate per daily batch (13,184 bytes of facts); integrated cost remains unmeasured; the margin stays and is re-measured; PE-9a, PE-9b and PC-8 |
 | Two key families for one buyer (Ed25519 for PoCC, secp256k1 for Warrant) | Key management complexity | Keep PoCC keys for PoCC artifacts only; the guardrail holds the Warrant keys; no key is used by both |
 | Hour alignment: PoCC slots are 60 s on drand rounds, hours are clock hours | Off-by-one at hour edges | Credit is attributed by the end time of each interval (as today); a period start on a clock hour removes partial first hours |
-| The meter key is the buyer's: a buyer could under-credit | Provider loses hours | Public re-execution and the dispute of section 8; the referee key; X-1 removes the issue |
+| The meter key is the buyer's: a buyer could under-credit | Provider loses hours | The provider's own verifier run detects it at once (the record binds the receipt hash); public re-execution and the dispute of section 8; the referee key; X-1 removes the issue |
+| The agent runs in the tenant's VM: the tenant can stop it, block it or read its key | Provider loses the time until it stops the machine | Liveness watch every slot and evidence custody (PC-9, decision 47): stop after `liveness_miss_slots` slots, `E` stays the bound, anchored slots stay payable; evidence the tenant cannot reach is deferred |
 | Verus scope creep | A wider claim than the proof covers | New gates are tested, not proved; the spec says so, as the solver and invoice checkers do |
 
 ## 12. Decisions taken
@@ -635,6 +648,7 @@ cost, are in `docs/decisions.md` (entries 15–25).
 - [x] One guardrail key for the registry, acceptance and meter roles in v1 (25).
 - [x] One mode, escrow only: the policy decides the proof; `meter_spec` mandatory; the PoCC Order and the offline path removed (30, 2 Nov).
 - [x] Challenge after the hour; an hour below the floors gets a zero note, never a gap in the batch (31, 2 Nov).
+- [x] The tenant controls the agent: the seller watches it every slot, stops after `liveness_miss_slots` missed slots and stores every anchored entry; the last-piece rule (pro rata or D6) is open (47, 3 Nov).
 - [ ] Buyer-note mode only; PE-9a and PE-9b are on hold pending mode priority, while PC-8 remains comparative. Record and note signatures verified in the settle transaction by a `RentFactsVerifier` pinned per `schemaId`; the guest keeps every other check and commits `factsHash`, `meterAddr`, `acceptanceAddr`; a per-chain choice by `schemaId`, two images from one guest source; amends 40, supersedes 44 and the re-signing wait and fallback proof of 45 if taken, 43's margin re-measured (46, 2 Nov, proposed, revised after the reviews of PR #1; PE-9a, PE-9b, PC-8).
 
 Phase B on the PoCC side is implemented (PC-1, PC-2: commit after this one). Phase A is open for review: PE-1 is policy-execution [#76](https://github.com/mnemonik-xyz/policy-execution/pull/76), W-1 is warrant [#16](https://github.com/mnemonik-xyz/warrant/pull/16). Both are drafts; the owner merges.

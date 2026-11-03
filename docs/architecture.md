@@ -14,7 +14,7 @@ What this does and does not establish (audit of 2 Nov, finding 1):
 
 | Property of "delivered compute" | Stage 0 | Stage 1 (SEV-SNP) | Later |
 |---|---|---|---|
-| Instance availability, sampled every 60 s | Yes, if the provider does not extract the agent key and run the signer elsewhere | Yes: the key is born inside an attested machine | — |
+| Instance availability, sampled every 60 s | Yes, if the provider does not extract the agent key and run the signer elsewhere; only while the tenant lets the agent run (§2a) | Yes: the key is born inside an attested machine; the tenant can still stop the agent | Evidence the tenant cannot reach (decision 47) |
 | Hardware identity and launched image | No (Nova's own record only) | Yes: launch measurement, VCEK chain | — |
 | Resource allocation (vCPUs, memory, GPU) | No | Partly: the attested image reads the hardware it sees | Stage 1 counters and GPU evidence (spec §11) |
 | Performance | No | No | Throughput checks, `tau_max` (deferred, decision 10) |
@@ -31,7 +31,7 @@ assumption, bounded by the slot length; duty cycling inside a slot is not caught
 | Tenant | Buyer's machine | Ed25519 signing key, X25519 seal key | Its own request and policy | — |
 | Provider (seller) | A clearly identified reseller renting the machine from an OpenStack cloud under its own account, with an explicit spending limit at the cloud (pilot arrangement, decision 33) | Escrow recipient key, cloud credentials | Accepting the escrow order; paying the cloud's own invoice; terminating the machine and its volumes | Meter readings, coverage, billing |
 | Cloud (amnezia.cloud) | OpenStack | — | Nothing of Warrant; it does not accept Warrant payments | Running the machine; it bills the reseller on its own terms |
-| Agent (`pocc-agent`) | Inside the tenant's VM | Agent key and disclosure seed, created at boot | Producing heartbeats (Stage 0: assumes the provider does not read VM memory) | — |
+| Agent (`pocc-agent`) | Inside the tenant's VM | Agent key and disclosure seed, created at boot | Producing heartbeats (Stage 0: assumes the provider does not read VM memory) | Running: the tenant can stop it, block it or read its key (§2a) |
 | Notary (`pocc-notary`) | Any host with a public IP | Anchor wallet or anchor key | Nothing; everything it serves is checkable | Time, order, content |
 | Beacon (drand quicknet) | Public network | — | Unpredictable values on a fixed 3 s schedule | — |
 | Anchor chain | The chain Warrant's escrow uses | — | Block time and append-only history | — |
@@ -86,6 +86,33 @@ flowchart LR
     C --> V
     N -. "inclusion proof per entry" .-> V
 ```
+
+## 2a. The tenant controls the agent
+
+The agent runs inside the tenant's VM, and the tenant has full control of it. The
+tenant can stop the agent, block its network, or read the agent key from memory and sign
+with it. Stage 0 cannot prevent this, and Stage 1 as specified does not either
+(decision 47).
+
+What the tenant cannot do:
+
+- It cannot change anchored evidence. The notary keeps the first entry for each agent and
+  sequence number and refuses a different one (`ErrFork`). The verifier's fork check
+  reads the same log.
+- It cannot reduce credit for anchored slots with the extracted key. A heartbeat signed
+  with that key is still a valid heartbeat, so it can only add credit. An early final
+  heartbeat ends credit from that point on, as stopping the agent does.
+
+Therefore a tenant that disables the agent stops the evidence for later slots only.
+The seller watches the agent every slot and stops the machine after
+`liveness_miss_slots` slots without an anchored heartbeat (Warrant lease evidence
+SS-12). It stores every anchored entry within one slot (SS-13). Time without anchored
+heartbeats is never paid.
+
+The usage record that the meter signs binds the receipt hash, and the verifier is
+deterministic. The seller's own verifier run therefore detects a false record at once,
+and anyone can refute it from the kept receipt. Settlement still trusts the meter's
+signature until the verifier runs inside the guest (X-1).
 
 ## 3. Components and trust boundaries
 

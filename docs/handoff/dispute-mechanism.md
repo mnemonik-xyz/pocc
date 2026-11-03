@@ -39,7 +39,16 @@ The buyer records the proposed key before funding. Before accepting the order, t
 The provider must refuse terms whose meter, delivery predicate or retention promises it cannot accept.
 It runs the verifier and signs records and billing eligibility under a key fixed before funding.
 It must deliver the evidence to the provider without a new buyer signature.
-This profile trusts the meter. It is not a trust-free proof of physical compute.
+This profile trusts the meter's signature at settlement. It is not a trust-free proof of physical compute.
+The meter's output can be checked, however. Each usage record binds the hash of the receipt that it was computed from.
+`pocc-verify` is deterministic, and the provider runs it for each piece, so the provider detects a false or conflicting record at once.
+Anyone can refute such a record from the kept receipt. Detection is not enforcement: there is no referee or clawback in this version.
+While the development anchor is in use, a refutation also rests on the notary's anchor key.
+
+The agent runs inside the buyer's machine. The buyer can stop it, block it, or read its key (architecture §2a, decision 47).
+The buyer cannot change anchored evidence: the notary keeps the first entry for each agent and sequence number.
+A hostile buyer can therefore stop future evidence only. The provider watches the agent every slot and stops the machine after `liveness_miss_slots` slots (lease evidence SS-12).
+The fallback pays only for time with anchored heartbeats. The listing states this.
 The existing Stage 0 property table remains applicable.
 
 X-1 remains the alternative for guest verification of authenticated raw evidence.
@@ -76,6 +85,9 @@ Bind that terminal statement's hash into the final batch when closing early. Do 
 The guest rejects interim evidence, short non-final batches, incomplete final prefixes and supplied contradictory statements.
 The worker must compare final evidence with its persisted expected claim before submitting either settlement.
 On observed conflicting final statements, retain them and stop automatic settlement and service. Do not select whichever version pays most or arrives first.
+Run `pocc-verify` on the receipt that each statement binds. A statement that does not follow from its receipt is the meter's fault; record that result with both statements.
+This identifies the fault. It does not authorize a payment.
+When the liveness watch stops the lease, the terminal stop statement records that stop, with the last piece that has anchored heartbeats as its cutoff.
 Keep pending reservations Held until an authorized outcome or existing expiry/loss classification.
 
 These are trusted-meter operating rules. A guest cannot detect an undisclosed conflicting signature elsewhere.
@@ -92,8 +104,8 @@ No wallet private key or cloud credential belongs in a public receipt or evidenc
 
 1. Read the funded mode, terms, image/schema and meter identity from trusted configuration and the accepted order.
 2. Refuse an order whose evidence cannot be obtained independently or whose deadlines cannot be met.
-3. Run the existing provisioning, metering, continuation and shutdown workflow.
-4. Collect independent delivery and eligibility evidence continuously.
+3. Run the existing provisioning, metering, continuation and shutdown workflow, plus the per-slot liveness watch (PC-9, lease evidence SS-12).
+4. Collect independent delivery and eligibility evidence continuously. Store every anchored entry and its inclusion proof within one slot (SS-13).
 5. Close each full batch, or the final partial batch when the lease stops.
 6. Build one canonical claim and compute the expected amount from the policy and evidence.
 7. Send the buyer a typed settlement acknowledgement request. Retry the same request idempotently.
@@ -159,6 +171,7 @@ Keep provisional losses distinct. Do not count a signature and proof as separate
 A signature, queued proof, valid local receipt and submitted transaction are not final settlement states.
 
 Keep the ceiling reservation until finalized payment or final loss classification.
+Add the liveness stop as a Stopping cause. Time after the last anchored heartbeat is provider loss, bounded by `E` because `liveness_miss_slots × 60 s ≤ challenge_timeout_s`.
 Preserve Lost overflow handling through Unresolved; do not drop reservations.
 Repeated timeouts, retries, restarts and reorg reconciliation must be idempotent.
 The old `Exposure()` remains a conservative service-exposure model, not a bound on proof fees or dispute-related capital lockup.
@@ -187,6 +200,7 @@ Decisions affected if this mode is adopted:
 - 38/41/45: retain closed batches, persistence and bounded accounting; distinguish response time from proof margin.
 - 40: add a buyer-authorized, provider-accepted fast path for the new rent mode. Existing proof-only orders remain unchanged.
 - 43: benchmark the new fallback guest before selecting prover capacity.
+- 47: applies unchanged. The liveness watch and evidence custody bound what a buyer gains by stopping the agent.
 - 44/46: do not require buyer notes or batch re-signing on a path intended to work without them.
   Optional Solidity verification of independent meter signatures requires a separate interface review.
 
@@ -230,6 +244,10 @@ Required new scenarios:
 21. Meter restart attempts to re-sign changed units or a different final batch prefix: durable commitment check refuses it.
 22. Worker observes conflicting final batch or terminal statements: retain evidence, stop automatic settlement and service, and retain Held accounting.
 23. Provider submits an invalid proof: reject despite the authorized caller.
+24. Buyer stops the agent or blocks its network mid-batch: the provider stops within `liveness_miss_slots` slots plus shutdown latency; anchored earlier pieces stay payable by proof; later time is unpaid.
+25. Buyer signs a different entry for an anchored sequence number with the extracted key: the notary refuses it; the claim does not change.
+26. Buyer signs an early final heartbeat: credit ends there, the provider stops, and the terminal stop statement records the cutoff.
+27. Meter signs a record that does not follow from its bound receipt: the provider's verifier run detects it; automatic settlement stops and both results are kept.
 
 The worker must refuse automatic acceptance of underpayment. An explicit provider concession remains possible.
 The contract caller check prevents hostile submission through either path; worker and guest checks prevent acceptance of interim or inconsistent evidence.
