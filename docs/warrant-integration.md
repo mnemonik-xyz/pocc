@@ -137,7 +137,9 @@ receipt prefix. The provider checks each entry's contents, stops on a failed one
 the machine after
 `liveness_miss_slots` slots without an anchored heartbeat, with
 `liveness_miss_slots × 60 s ≤ challenge_timeout_s`, so `E` stays the bound (lease
-evidence SS-12, SS-13; decision 47).
+evidence SS-12, SS-13; decision 47). A buyer that drops fewer slots at a time, so that each
+hour misses the coverage floor, is stopped too: the provider stops as soon as the current
+hour cannot reach its floor, and after any zero-payable hour (SS-12, SS-14; decision 48).
 
 ## 4. The rent policy
 
@@ -393,7 +395,9 @@ cases both implementations must decide alike (DL-12).
 
 An hour below the floors is not skipped (decision 31). The guardrail signs its usage
 record and a note for amount 0, so note indices stay consecutive and the batch settles
-with that hour unpaid. A guardrail that signs nothing is non-cooperation: the provider
+with that hour unpaid. The lease then stops, also after a correct zero note for an honest
+outage (decision 48); the zero note stays in the batch, and the earlier hours settle. A
+guardrail that signs nothing is non-cooperation: the provider
 stops `challenge_timeout_s` after the hour ended and settles the notes it holds; the
 batch closes once and a note that arrives later is refused (lease evidence 5a.5, SS-11).
 This describes the buyer-note mode. In the proposed dispute mechanism
@@ -591,7 +595,7 @@ widening of the Verus claim, golden vectors changed only on purpose.
 | PC-7 (future) | Referee dispute object, `pocc-broker dispute open|resolve`, referee re-execution, anchored dispute; a disputed hour gets its own obligation | Decision 20 reversed | — |
 | PC-6 | Batch builder: `pocc-broker batch` assembles `MeterInput` JSON (notes, records, credential) for `warrant-host prove rent` | PE-4, PC-3 | A batch proves and settles on Arc testnet (ME-3 for a PoCC batch) |
 | PC-8 (proposed, decision 46) | Brief `docs/handoff/pc-8-attested-bench.md`. `ATTESTED=1` in `bench/rent-guest`, with the credential signature added to all three modes: the guest takes records and notes without signatures, keeps the credential signature, the pre-gate checks, D1 and D3–D9 and the hashing, derives `meterAddr` and `acceptanceAddr` from the policy keys and commits them with `factsHash`; cycles and proving time for batches of 1, 6, 24 and 168 hours beside the two signed forms in `docs/measurements.md` | Decision 46 proposed | Cycles per hour with no record or note signature in the guest measured, not estimated; proving time on the CPU prover, so `settlement_margin_s` and "CPU suffices" rest on numbers; the owner decides 46 on them |
-| PC-9 (decision 47) | Liveness watch and evidence custody: `pocc-broker watch` reads the notary's entries for the lease's agent after every slot, checks each new entry with the verifier against the stored valid prefix, keeps the last valid receipt prefix, stores each anchored entry with its inclusion proof within one slot, and sends Stopping to `pkg/lease` after `liveness_miss_slots` consecutive slots without an anchored heartbeat inside the bracket, or on a final heartbeat before `service_end`, or on an entry that fails the content check; `pkg/receipt` gains a prefix assembly that never includes a failed entry; `pkg/lease` gains the liveness stop as a Stopping cause; the adapter refuses a policy with `liveness_miss_slots × 60 s > challenge_timeout_s` | PC-5; PC-4 for the Arc anchor (the dev anchor is enough for tests) | Lease evidence DL-15 as tests: agent stopped mid-hour, network blocked, early final heartbeat, a different entry for an anchored sequence number refused, a notary outage shorter than the limit, a signed malformed heartbeat after a valid prefix (the full receipt is `INVALID`, the prefix receipt verifies and gives the same records for completed pieces), a provisional next piece with valid heartbeats followed by shutdown (not billable); loss at most `E` in each |
+| PC-9 (decision 47) | Liveness watch and evidence custody: `pocc-broker watch` reads the notary's entries for the lease's agent after every slot, checks each new entry with the verifier against the stored valid prefix, keeps the last valid receipt prefix, stores each anchored entry with its inclusion proof within one slot, and sends Stopping to `pkg/lease` after `liveness_miss_slots` consecutive slots without an anchored heartbeat inside the bracket, or on a final heartbeat before `service_end`, or on an entry that fails the content check, or as soon as the current hour cannot reach `min_coverage_bp` (decision 48); `pkg/lease` stops after every zero-payable piece instead of continuing after an expected zero note; `pkg/receipt` gains a prefix assembly that never includes a failed entry; `pkg/lease` gains the liveness stop as a Stopping cause; the adapter refuses a policy with `liveness_miss_slots × 60 s > challenge_timeout_s` | PC-5; PC-4 for the Arc anchor (the dev anchor is enough for tests) | Lease evidence DL-15 as tests: agent stopped mid-hour, network blocked, early final heartbeat, a different entry for an anchored sequence number refused, a notary outage shorter than the limit, a signed malformed heartbeat after a valid prefix (the full receipt is `INVALID`, the prefix receipt verifies and gives the same records for completed pieces), a provisional next piece with valid heartbeats followed by shutdown (not billable), coverage cases (four consecutive or four scattered lost intervals in a middle hour stop, three do not; three stop in a 3,540-second boundary hour; an interval before its anchoring deadline is not counted), and zero acknowledgements (a correct zero note stops the lease and the batch settles the earlier hours); loss at most `E` in each |
 
 Decision 46 applies to the buyer-note mode. The [dispute mechanism](https://github.com/mnemonik-xyz/policy-execution/pull/77) needs a different witness and authorization interface.
 PE-9a and PE-9b wait for the owner to decide which mode to prioritize. PC-8 can continue as a comparative experiment only.
@@ -640,6 +644,7 @@ its outputs are JSON shapes that PE-3 fixes.
 | Hour alignment: PoCC slots are 60 s on drand rounds, hours are clock hours | Off-by-one at hour edges | Credit is attributed by the end time of each interval (as today); a period start on a clock hour removes partial first hours |
 | The meter key is the buyer's: a buyer could under-credit | Provider loses hours | The provider's own verifier run detects it at once (the record binds the receipt hash); public re-execution and the referee dispute of section 8; the referee key; X-1 removes the issue |
 | The agent runs in the tenant's VM: the tenant can stop it, block it or read its key | Provider loses the time until it stops the machine | Liveness watch every slot and evidence custody (PC-9, decision 47): stop after `liveness_miss_slots` slots, `E` stays the bound, anchored slots stay payable; a sidecar the tenant cannot stop and an observer are research (`docs/research-sidecar-observer.md`) |
+| A buyer repeats the below-floor pattern across new leases | Each lease loses at most one zero-payable hour, but the pattern can repeat | Decision 48 bounds it per lease only; production needs admission controls or an explicitly agreed provisioning or minimum charge |
 | Verus scope creep | A wider claim than the proof covers | New gates are tested, not proved; the spec says so, as the solver and invoice checkers do |
 
 ## 12. Decisions taken
@@ -660,7 +665,8 @@ cost, are in `docs/decisions.md` (entries 15–25).
 - [x] One guardrail key for the registry, acceptance and meter roles in v1 (25).
 - [x] One mode, escrow only: the policy decides the proof; `meter_spec` mandatory; the PoCC Order and the offline path removed (30, 2 Nov).
 - [x] Challenge after the hour; an hour below the floors gets a zero note, never a gap in the batch (31, 2 Nov).
-- [x] The tenant controls the agent: the seller watches it every slot, stops after `liveness_miss_slots` missed slots and stores every anchored entry; the last-piece rule (pro rata or D6) is open; a sidecar the tenant cannot stop and an observer are kept as research (47, 3 Nov).
+- [x] The tenant controls the agent: the seller watches it every slot, stops after `liveness_miss_slots` missed slots and stores every anchored entry; a sidecar the tenant cannot stop and an observer are kept as research (47, 3 Nov).
+- [x] Stop as soon as the current hour cannot reach its coverage floor, and never continue after a zero-payable hour; D6 stays for the last hour (48, 3 Nov).
 - [ ] Buyer-note mode only; PE-9a and PE-9b are on hold pending mode priority, while PC-8 remains comparative. Record and note signatures verified in the settle transaction by a `RentFactsVerifier` pinned per `schemaId`; the guest keeps every other check and commits `factsHash`, `meterAddr`, `acceptanceAddr`; a per-chain choice by `schemaId`, two images from one guest source; amends 40, supersedes 44 and the re-signing wait and fallback proof of 45 if taken, 43's margin re-measured (46, 2 Nov, proposed, revised after the reviews of PR #1; PE-9a, PE-9b, PC-8).
 
 Phase B on the PoCC side is implemented (PC-1, PC-2: commit after this one). Phase A is open for review: PE-1 is policy-execution [#76](https://github.com/mnemonik-xyz/policy-execution/pull/76), W-1 is warrant [#16](https://github.com/mnemonik-xyz/warrant/pull/16). Both are drafts; the owner merges.

@@ -115,7 +115,9 @@ only. It stops the machine on a failed entry, an early final heartbeat, or
 `liveness_miss_slots` slots without a valid anchored heartbeat (Warrant lease evidence
 SS-12). It stores every anchored entry within one slot (SS-13). Time without valid
 anchored heartbeats is never paid, and heartbeats inside a provisional piece are not
-billable by themselves.
+billable by themselves. The seller also stops as soon as the current hour can no longer
+reach its coverage floor, and after any zero-payable hour (decision 48), so a tenant that
+drops a few slots each hour cannot keep the machine unpaid.
 
 The usage record that the meter signs binds the receipt hash, and the verifier is
 deterministic. The seller's own verifier run therefore detects a false record at once,

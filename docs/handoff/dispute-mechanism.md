@@ -178,6 +178,8 @@ A signature, queued proof, valid local receipt and submitted transaction are not
 
 Keep the ceiling reservation until finalized payment or final loss classification.
 Add the liveness stop as a Stopping cause. Time after the last anchored heartbeat is provider loss, bounded by `E` because `liveness_miss_slots × 60 s ≤ challenge_timeout_s`.
+Add two more Stopping causes (decision 48): the current piece can no longer reach its coverage floor, and a zero-payable piece ended, also after a correct zero acknowledgement.
+Zero records stay valid for accounting and for settling earlier pieces. A buyer can repeat the pattern across new leases; that needs admission controls or an agreed provisioning or minimum charge.
 Preserve Lost overflow handling through Unresolved; do not drop reservations.
 Repeated timeouts, retries, restarts and reorg reconciliation must be idempotent.
 The old `Exposure()` remains a conservative service-exposure model, not a bound on proof fees or dispute-related capital lockup.
@@ -256,6 +258,9 @@ Required new scenarios:
 27. Meter signs a record that does not follow from its bound receipt: the provider's verifier run detects it; automatic settlement stops and both results are kept.
 28. Buyer submits a signed but malformed heartbeat after a valid prefix (wrong round, wrong beacon value, broken chain link, or an entry after a final heartbeat): the provider stops at once; the full receipt is `INVALID`; the last valid prefix verifies and gives the same records for completed pieces.
 29. The next piece runs provisionally with valid heartbeats, its continuation is never authorized, and the machine stops: the cutoff is the last eligible piece, and the provisional piece is not paid.
+30. Buyer drops fewer than `liveness_miss_slots` slots at a time so that each hour misses the floor (3,360 of 3,600 against 3,420): the lease stops in the first hour once the floor is out of reach, at the anchoring deadline of the fourth lost interval.
+31. Scattered single gaps that add up past the floor stop the lease the same way; three lost intervals in a middle hour do not; three stop a 3,540-second boundary hour.
+32. The buyer acknowledges zero correctly for an honest outage: the zero piece stays in its batch, earlier pieces settle, and the lease stops.
 
 The worker must refuse automatic acceptance of underpayment. An explicit provider concession remains possible.
 The contract caller check prevents hostile submission through either path; worker and guest checks prevent acceptance of interim or inconsistent evidence.

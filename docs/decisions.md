@@ -70,7 +70,8 @@ handoff (`docs/handoff/`).
 | 44 | 2026-11-02 | One meter signature over the batch's records (`warrant/usage-batch-signed/v1`) replaces the per-record signatures in the proof; the per-hour records and the notes' binding are unchanged; the guest accepts either form (D2); the guardrail re-signs at batch close (BG-7) | Taken, with the owner | PE-0 §3, §4; lease evidence 5a.2, 5a.3, 5a.5, BG-7, DL-14; `pkg/adapter/warrant`, `pocc-verify` | Per-record signatures only: 16.2 M cycles per daily batch instead of 9.0 M |
 | 45 | 2026-11-02 | The batch is signed from the hourly records persisted at each hour's signing, never from records regenerated from the receipt; the grace is `G = 2 × challenge_timeout_s + M` with `M` budgeted for the per-record fallback proof; DL-13 and PE-8 measure verified succinct and Groth16 receipts, in both signature forms, under concurrent load | Taken | Lease evidence 5a.2, 5a.5, BG-7, DL-13; `pkg/adapter/warrant`, `pkg/lease`, `bench/rent-guest` | Sign regenerated records (a receipt re-run could change what was signed); budget `G` for the fast path only (the fallback then misses the deadline) |
 | 46 | 2026-11-02 | Buyer-note mode only. Signature verification of the rent case moves from the guest to Solidity, in the settle transaction: `WarrantEscrow.settle(seal, journal, facts)` hands `facts` (the batch's records and notes with their 65-byte signatures, index order) to a stateless `RentFactsVerifier` pinned per `schemaId` beside the image ID; it recomputes each digest, recovers the signer (low-s, no zero address), compares it with the `meterAddr` and `acceptanceAddr` words of the journal, and recomputes `factsHash` over the signature-free bytes, which must equal the journal's. The guest derives the two addresses from the policy's keys, keeps the nine pre-gate checks except the two signature checks, D1 and D3–D9, the credential signature and the rule tree, and commits `factsHash`, `meterAddr`, `acceptanceAddr`. No registry, no attestation state. Amends 40 (the escrow gains `facts` and one verifier call); the mode is a per-chain choice by `schemaId`, two images from one guest source. Supersedes 44 and, of 45, the re-signing wait and the fallback proof if taken; persisted records and 43's margin stay, `G = challenge_timeout_s + settlement_margin_s` | Proposed. PE-9a and PE-9b on hold pending mode priority; PC-8 is comparative only. Updated 3 Nov after review | Integration §6.2 steps 10–11, §6.3, §7, PE-9a, PE-9b, PC-8; handoffs `docs/handoff/`; PE-0 §3, §5, §6; `pkg/adapter/warrant`; `bench/rent-guest`; `WarrantEscrow` | Additive to the contract: drop `facts` and the verifier call, the guest verifies signatures again, 44 and 45 return; batches settled under 46 stay valid under 46's image |
-| 47 | 2026-11-03 | The agent runs in the tenant's machine, so the tenant can stop it, block it or read its key; no rule prevents that. The seller watches the agent every slot (lease evidence SS-12): `liveness_miss_slots` consecutive slots without a valid anchored heartbeat, an early final heartbeat, or an entry that fails the verifier's content check stop the lease; records come from the last valid receipt prefix, and the dispute-mode cutoff comes from billing eligibility, not heartbeats; `liveness_miss_slots × 60 s ≤ challenge_timeout_s`, so `E` stays the bound; the seller stores every anchored entry within one slot (SS-13) and uses a notary that keeps the first entry per agent and sequence number; the listing states the rule. Usage records bind their receipt hash, so a false record is detected by the seller's own verifier run and refutable by anyone; settlement still trusts the meter's signature until X-1 | Taken, with the owner, 3 Nov; the last-piece rule (pro rata or D6) stays open; sidecar and observer kept as research | Lease evidence 5a.4, 5a.5, SS-12, SS-13, DL-15; integration §3, §8.1, §10 PC-9, §11; architecture §1, §2a; dispute handoffs; `pkg/lease`, `pocc-broker` | Drop the watch: the seller's loss for a stopped agent returns to the challenge timeout of `E`; anchored evidence is unaffected |
+| 47 | 2026-11-03 | The agent runs in the tenant's machine, so the tenant can stop it, block it or read its key; no rule prevents that. The seller watches the agent every slot (lease evidence SS-12): `liveness_miss_slots` consecutive slots without a valid anchored heartbeat, an early final heartbeat, or an entry that fails the verifier's content check stop the lease; records come from the last valid receipt prefix, and the dispute-mode cutoff comes from billing eligibility, not heartbeats; `liveness_miss_slots × 60 s ≤ challenge_timeout_s`, so `E` stays the bound; the seller stores every anchored entry within one slot (SS-13) and uses a notary that keeps the first entry per agent and sequence number; the listing states the rule. Usage records bind their receipt hash, so a false record is detected by the seller's own verifier run and refutable by anyone; settlement still trusts the meter's signature until X-1 | Taken, with the owner, 3 Nov; the last-piece rule is decided by 48; sidecar and observer kept as research | Lease evidence 5a.4, 5a.5, SS-12, SS-13, DL-15; integration §3, §8.1, §10 PC-9, §11; architecture §1, §2a; dispute handoffs; `pkg/lease`, `pocc-broker` | Drop the watch: the seller's loss for a stopped agent returns to the challenge timeout of `E`; anchored evidence is unaffected |
+| 48 | 2026-11-03 | Two more stop conditions, beside the five-consecutive-slot rule of 47: the seller stops as soon as the current piece can no longer reach its coverage floor (`(creditable_k − lost_k) × 10000 < min_coverage_bp × creditable_k`, where `lost_k` counts every interval, consecutive or scattered, that was not credited once its anchoring deadline passed), and it never continues after a zero-payable piece, even when the buyer signs zero correctly; zero records stay valid for accounting and for settling earlier pieces; D6 applies to the last eligible piece unchanged | Taken, with the owner | Lease evidence SS-12, SS-14, 5a.5, DL-11, DL-15; integration §3, §7, PC-9, §11; dispute handoffs; `pkg/lease` | Charge pro rata without the floor (changes the commercial promise, still needs a defence against sustained zero-credit operation); or drop both conditions: a buyer can then keep every hour just below the floor and get it unpaid |
 
 ## Pending request: dispute mechanism
 
@@ -556,9 +557,8 @@ conflicting record at once and anyone can refute it from the kept receipt. That 
 detection, not enforcement: settlement trusts the meter's signature (decision 35), there is
 no referee (decision 20), and while the development anchor is in use a refutation also
 rests on the notary's anchor key. Enforcement is X-1, which needs BLS verification of the
-drand rounds, the Arc anchor (PC-4) and a witness design. *Open:* whether the last piece of
-a lease that SS-12 stopped is paid pro rata over the time served, or keeps the coverage
-floor of D6 over the whole piece; until the owner decides, D6 applies unchanged.
+drand rounds, the Arc anchor (PC-4) and a witness design. *Decided by 48:* D6 applies to the
+last eligible piece unchanged; the seller limits the loss by stopping early.
 *Kept as research (option B), at the owner's request:* a sidecar that the tenant cannot
 stop, and an observer. Either must be tenant-proof and seller-proof at once: a sidecar or
 observer that the seller controls without attestation could fake liveness, which returns
@@ -570,3 +570,35 @@ observer. *Work:* PC-9 (integration §10).
 *Reversal:* drop the watch and the custody rule; the seller's loss for a stopped agent
 returns to the challenge timeout of `E`; anchored evidence and existing records are
 unaffected.
+
+**48 Stop when the coverage floor is out of reach, and after any zero-payable piece.**
+*Found by:* the review of 3 Nov of decision 47, which reproduced a pattern that the
+five-consecutive-slot rule misses. The buyer drops fewer than `liveness_miss_slots` slots
+at a time, so the watch never fires, but the hour ends at 3,360 credited seconds against
+the 3,420 that `min_coverage_bp = 9500` needs for a full middle hour. D6 then makes the
+hour a zero note, and the lease continued, so the buyer could repeat this every hour and
+get the machine unpaid. *Decision:* two more stop conditions; the rule of 47 stays.
+(1) The seller stops as soon as the current piece can no longer reach its coverage floor.
+An interval is irrecoverably missed when its anchoring deadline (the round time of its
+later slot plus `bracket_s`) has passed and the verifier, over the valid prefix, did not
+credit it. `lost_k` is the sum of those seconds in piece k, consecutive or scattered. The
+seller stops when `(creditable_k − lost_k) × 10000 < min_coverage_bp × creditable_k`, the
+integer form of D6. At 9500, a middle hour stops at the fourth lost interval and a
+boundary hour of 3,540 creditable seconds at the third (lease evidence SS-12). (2) The
+seller never continues after a zero-payable piece (D6, D7, or a zero note for any
+reason), also when the buyer signed zero correctly for an honest outage. That is the
+availability tradeoff. The zero record and note stay valid: they keep the indices
+consecutive, enter the accounting, and the batch settles the earlier pieces (SS-14).
+*Consequence:* the funded payment rules do not change; the seller stops further service
+instead of charging for evidence that the policy rejects. Per lease, the seller serves at
+most one zero-payable piece, and its loss stays within `E`. `pkg/lease` changes: today it
+continues after a zero note that its own verifier also expected (`lease.go`, the
+underpayment gate); under 48 it stops (PC-9). D6 applies to the last eligible piece
+unchanged, which closes the question that 47 left open. *Residual risk:* a per-lease stop
+cannot stop a buyer that repeats the pattern across new leases. Production needs admission
+controls, or an explicitly agreed provisioning or minimum charge in the listing.
+*Alternatives:* charge pro rata and remove the floor: it changes the commercial promise,
+and it still needs a defence against sustained zero-credit operation; recorded, not taken.
+*Tests:* consecutive gaps, scattered gaps, boundary hours, the deadline rule, and zero
+acknowledgements (lease evidence DL-15). *Reversal:* remove the two conditions; the
+pattern above returns.
