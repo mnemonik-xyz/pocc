@@ -114,6 +114,9 @@ deterministic. The seller's own verifier run therefore detects a false record at
 and anyone can refute it from the kept receipt. Settlement still trusts the meter's
 signature until the verifier runs inside the guest (X-1).
 
+A sidecar that the tenant cannot stop, and an observer, are kept as research for a later
+improvement: [research-sidecar-observer.md](research-sidecar-observer.md).
+
 ## 3. Components and trust boundaries
 
 ```mermaid

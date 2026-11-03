@@ -32,7 +32,8 @@ when the executed policy names it as the delivery proof.
 
 The agent runs in the tenant's VM, so the tenant can stop it. That ends the evidence
 for later slots, not for anchored ones; the seller watches the agent every slot and
-stops the machine ([decision 47](docs/decisions.md)).
+stops the machine ([decision 47](docs/decisions.md)). A sidecar that the tenant cannot
+stop, and an observer, are [research](docs/research-sidecar-observer.md).
 
 ## Components
 

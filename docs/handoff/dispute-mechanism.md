@@ -49,6 +49,7 @@ The agent runs inside the buyer's machine. The buyer can stop it, block it, or r
 The buyer cannot change anchored evidence: the notary keeps the first entry for each agent and sequence number.
 A hostile buyer can therefore stop future evidence only. The provider watches the agent every slot and stops the machine after `liveness_miss_slots` slots (lease evidence SS-12).
 The fallback pays only for time with anchored heartbeats. The listing states this.
+A sidecar that the buyer cannot stop, and an observer, are research for a later improvement (`docs/research-sidecar-observer.md`).
 The existing Stage 0 property table remains applicable.
 
 X-1 remains the alternative for guest verification of authenticated raw evidence.

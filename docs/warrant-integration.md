@@ -627,7 +627,7 @@ its outputs are JSON shapes that PE-3 fixes.
 | Two key families for one buyer (Ed25519 for PoCC, secp256k1 for Warrant) | Key management complexity | Keep PoCC keys for PoCC artifacts only; the guardrail holds the Warrant keys; no key is used by both |
 | Hour alignment: PoCC slots are 60 s on drand rounds, hours are clock hours | Off-by-one at hour edges | Credit is attributed by the end time of each interval (as today); a period start on a clock hour removes partial first hours |
 | The meter key is the buyer's: a buyer could under-credit | Provider loses hours | The provider's own verifier run detects it at once (the record binds the receipt hash); public re-execution and the dispute of section 8; the referee key; X-1 removes the issue |
-| The agent runs in the tenant's VM: the tenant can stop it, block it or read its key | Provider loses the time until it stops the machine | Liveness watch every slot and evidence custody (PC-9, decision 47): stop after `liveness_miss_slots` slots, `E` stays the bound, anchored slots stay payable; evidence the tenant cannot reach is deferred |
+| The agent runs in the tenant's VM: the tenant can stop it, block it or read its key | Provider loses the time until it stops the machine | Liveness watch every slot and evidence custody (PC-9, decision 47): stop after `liveness_miss_slots` slots, `E` stays the bound, anchored slots stay payable; a sidecar the tenant cannot stop and an observer are research (`docs/research-sidecar-observer.md`) |
 | Verus scope creep | A wider claim than the proof covers | New gates are tested, not proved; the spec says so, as the solver and invoice checkers do |
 
 ## 12. Decisions taken
@@ -648,7 +648,7 @@ cost, are in `docs/decisions.md` (entries 15–25).
 - [x] One guardrail key for the registry, acceptance and meter roles in v1 (25).
 - [x] One mode, escrow only: the policy decides the proof; `meter_spec` mandatory; the PoCC Order and the offline path removed (30, 2 Nov).
 - [x] Challenge after the hour; an hour below the floors gets a zero note, never a gap in the batch (31, 2 Nov).
-- [x] The tenant controls the agent: the seller watches it every slot, stops after `liveness_miss_slots` missed slots and stores every anchored entry; the last-piece rule (pro rata or D6) is open (47, 3 Nov).
+- [x] The tenant controls the agent: the seller watches it every slot, stops after `liveness_miss_slots` missed slots and stores every anchored entry; the last-piece rule (pro rata or D6) is open; a sidecar the tenant cannot stop and an observer are kept as research (47, 3 Nov).
 - [ ] Buyer-note mode only; PE-9a and PE-9b are on hold pending mode priority, while PC-8 remains comparative. Record and note signatures verified in the settle transaction by a `RentFactsVerifier` pinned per `schemaId`; the guest keeps every other check and commits `factsHash`, `meterAddr`, `acceptanceAddr`; a per-chain choice by `schemaId`, two images from one guest source; amends 40, supersedes 44 and the re-signing wait and fallback proof of 45 if taken, 43's margin re-measured (46, 2 Nov, proposed, revised after the reviews of PR #1; PE-9a, PE-9b, PC-8).
 
 Phase B on the PoCC side is implemented (PC-1, PC-2: commit after this one). Phase A is open for review: PE-1 is policy-execution [#76](https://github.com/mnemonik-xyz/policy-execution/pull/76), W-1 is warrant [#16](https://github.com/mnemonik-xyz/warrant/pull/16). Both are drafts; the owner merges.
