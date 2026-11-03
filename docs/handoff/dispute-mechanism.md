@@ -65,6 +65,23 @@ Do not require a final buyer message to issue the fallback witness.
 The meter must observe continuation and stopping as they happen; provider assertions alone cannot establish billing eligibility.
 Freeze that witness type with Warrant before building the meter service.
 
+Finality is part of the signed evidence, not a worker flag. Interim records and eligibility snapshots use separate types and tags and cannot authorize settlement.
+Within the accepted policy scope, persist one final record content per `(lease_id, index)`, one final batch content per `(lease_id, batch)`, and one terminal stop content per lease.
+Persist each commitment atomically before signing. Retries and crash recovery return the same content; they must not revise units, record hashes or cutoffs.
+Replacing a signing key or service instance cannot reset the accepted lease's finalization history.
+
+Finalize each record after its piece ends and the policy's evidence-completion/finality rule holds.
+A final batch covers every scheduled piece, including zero-unit outages, unless a unique terminal statement establishes its exact final eligible prefix.
+Bind that terminal statement's hash into the final batch when closing early. Do not select an arbitrary shorter prefix.
+The guest rejects interim evidence, short non-final batches, incomplete final prefixes and supplied contradictory statements.
+The worker must compare final evidence with its persisted expected claim before submitting either settlement.
+On observed conflicting final statements, retain them and stop automatic settlement and service. Do not select whichever version pays most or arrives first.
+Keep pending reservations Held until an authorized outcome or existing expiry/loss classification.
+
+These are trusted-meter operating rules. A guest cannot detect an undisclosed conflicting signature elsewhere.
+They complement the contract caller restriction; they do not justify permissionless proof settlement.
+Different proof encodings for the same final entitlement are valid; the signed content must remain consistent.
+
 Persist policy bytes, order identity, meter identity, hourly records, signatures, receipt inputs, closure and eligible prefix.
 Store the exact acknowledgement request, received signature, local verification outcome, proof job and transaction hashes.
 Never regenerate a signed record from a later receipt snapshot.
@@ -84,18 +101,20 @@ No wallet private key or cloud credential belongs in a public receipt or evidenc
 9. Submit acknowledgement settlement from the funded recipient account only after accepting its exact amount and closure terms.
 10. If no valid acknowledgement has settled by `proof_after(batch)`, check on-chain consumption and start the prover.
 11. Verify the resulting receipt locally against the pinned image and journal before submission.
-12. Check consumption again and submit proof settlement before the deadline.
+12. Compare the proved claim with final evidence, check consumption again, and submit proof settlement from the funded recipient account before the deadline.
 13. Reconcile both paths against finalized chain state before closing the payment reservation.
 
 An acknowledgement received during proving can still settle. Cancel queued work when safe; running work can be wasted.
 The contract's shared replay check resolves any submission race.
-Acknowledgement settlement requires `msg.sender == order.recipient` in the contract, even for zero or reduced amounts.
-The buyer and third-party relayers cannot consume the obligation using only a buyer signature.
-Proof settlement remains permissionless after timeout and pays only the fixed recipient.
+Both settlement paths require `msg.sender == order.recipient` in the contract, even for zero or reduced amounts and final-prefix cutoffs.
+The buyer and third parties cannot consume the obligation using a signature or a valid proof without provider submission.
+Proof settlement also requires a verified receipt after timeout and pays only the fixed recipient.
 A provider contract wallet must call through its authorized execution path. An unrelated operator EOA cannot submit directly.
-Relayed acknowledgements require a future, separately reviewed provider countersignature; this version does not support them.
+Direct third-party settlement on either path requires a future, separately reviewed provider countersignature; this version does not support it.
+Provider account availability is therefore required for both paths. Provers can produce receipts without receiving the provider account's signing authority.
+Do not add a permissionless timeout bypass. It would allow competing valid claims to consume the batch again.
 
-A buyer signature is an offer until the provider submits it. The signature alone is not a reservation or a confirmed payment.
+A buyer signature is an offer until the provider submits it. Neither a signature nor a proof alone reserves or settles the claim.
 Rejected or invalid offers cannot reset the response period, set a terminal cutoff, change spend or consume the batch.
 Check the full journal, including evidence hash, amount, prefix and cutoff, before signing the provider transaction.
 Do not use the worker's amount check as a substitute for the contract's caller check.
@@ -150,11 +169,11 @@ Recompute economic exposure with failed proofs, meter outages and the fallback s
 | Package | Change |
 |---|---|
 | Policy adapter | New mode/version, response timeout, customer acknowledgement identity, independent meter and terms-hash fields |
-| Meter service | Independent custody, durable evidence delivery, authenticated billing eligibility and terminal cutoff |
+| Meter service | Independent custody, durable final-content commitments, evidence delivery, authenticated eligibility and unique terminal cutoff |
 | Buyer integration | Display and sign the versioned batch acknowledgement; distinguish it from hourly continuation |
 | Batch builder | Build the same closed claim for both paths from persisted evidence |
 | Lease model | Held fallback reservations, expiry and exact-once reconciliation |
-| Settlement worker | Provider-authorized acknowledgement submission, permissionless proof settlement after timeout, pinned-image verification, race/reorg handling |
+| Settlement worker | Provider submission on both paths, final-evidence selection, proof settlement after timeout, pinned-image verification, race/reorg handling |
 | Benchmark | New fallback witness and guest; CPU/GPU latency, concurrent queueing and both transaction paths |
 
 Policy-execution owns the authoritative encodings and shared fixtures.
@@ -202,11 +221,18 @@ Required new scenarios:
 12. A relayer copies a valid buyer signature: acknowledgement submission fails without a provider caller.
 13. Provider deliberately accepts a reduced or zero amount: it closes once, with no later top-up.
 14. Provider contract-wallet execution succeeds; an unrelated operator's direct submission fails.
-15. Repeated rejected offers cannot restart the clock or change reservations; proof remains permissionless after timeout.
+15. Repeated rejected offers cannot restart the clock or change reservations; the provider's proof remains usable after timeout.
 16. Non-divisible schedules and overflowing counts are refused before service starts.
+17. Buyer or relayer submits a valid lower-value proof, earlier cutoff or copied provider proof: Unauthorized, with no payment-state changes.
+18. Provider submits the full claim after those rejected attempts: it remains payable under all common bounds.
+19. Interim eligibility or usage evidence is supplied to the guest: reject even when the signature is valid.
+20. A short non-final prefix lacks a terminal statement, or ends before its declared cutoff: reject.
+21. Meter restart attempts to re-sign changed units or a different final batch prefix: durable commitment check refuses it.
+22. Worker observes conflicting final batch or terminal statements: retain evidence, stop automatic settlement and service, and retain Held accounting.
+23. Provider submits an invalid proof: reject despite the authorized caller.
 
 The worker must refuse automatic acceptance of underpayment. An explicit provider concession remains possible.
-The contract caller check prevents hostile submission; the worker check only prevents the provider from accepting by mistake.
+The contract caller check prevents hostile submission through either path; worker and guest checks prevent acceptance of interim or inconsistent evidence.
 
 Local model tests do not replace a real proved and funded testnet settlement.
 The final acceptance report must identify the trusted meter and exactly what delivery property it attested.

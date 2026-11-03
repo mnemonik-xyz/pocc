@@ -2,7 +2,7 @@
 
 Proposed amendment, 3 Nov 2026: [dispute mechanism](handoff/dispute-mechanism.md).
 It records the requested settlement change, existing code reuse and the independent-evidence requirement.
-Acknowledgement settlement requires provider submission and buyer authorization. Proof settlement remains permissionless after the response period.
+Both settlement paths require provider submission: acknowledgement also requires buyer authorization; proof settlement requires final evidence and the response timeout.
 The baseline below is retained; the new mode is not implemented.
 
 Status: v0.1 reviewed by the owner on 2026-10-29; decisions D-A to D-H taken (see
