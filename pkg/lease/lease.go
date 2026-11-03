@@ -2,8 +2,10 @@
 // and 5a.6 specify it: the state machine, the reservation ledger (SS-10), batch
 // closing (SS-11), note windows (BG-6) and the deadline formula. It moves no
 // money and signs nothing; it decides what the seller's service does next and
-// records every reservation exactly once. The simulation in lease_test.go runs
-// the DL-11 scenarios against it.
+// records every reservation exactly once. For a PoCC lease it also takes the
+// seller's per-slot watch (SS-12, pocc decisions 47 and 48) and stops after
+// every zero-payable piece (SS-14). The simulations in lease_test.go and
+// watch_test.go run the DL-11 and DL-15 scenarios against it.
 package lease
 
 import (
@@ -43,6 +45,66 @@ type Params struct {
 	Ceiling           uint64 // token base units, the lease
 	BatchSize         uint32
 	SettleBy          int64 // the order's settleBy
+
+	// The PoCC liveness watch of lease evidence SS-12. SlotS == 0 means a lease
+	// without the watch; Watch then refuses every observation.
+	SlotS             int64  // the slot length, 60 s for PoCC
+	FirstSlotAt       int64  // the time of the first slot at or after ServiceStart
+	BracketS          int64  // an entry anchored later than slot time + BracketS is late
+	LivenessMissSlots uint32 // consecutive slots without a live heartbeat that stop the lease
+	MinCoverageBP     uint16 // the coverage floor of D6, in basis points
+}
+
+// Watched reports whether the lease has the PoCC liveness watch.
+func (p Params) Watched() bool { return p.SlotS != 0 }
+
+// SlotTime is the time of slot j: FirstSlotAt + j * SlotS.
+func (p Params) SlotTime(j uint32) int64 { return p.FirstSlotAt + int64(j)*p.SlotS }
+
+// AnchorDeadline is the anchoring deadline of the interval that ends at slot
+// j: the time of slot j plus BracketS. Before it, the interval is not lost.
+func (p Params) AnchorDeadline(j uint32) int64 { return p.SlotTime(j) + p.BracketS }
+
+// PieceOf is the piece that the interval ending at time e belongs to: credit is
+// attributed by the end time of each interval.
+func (p Params) PieceOf(e int64) uint32 { return uint32((e - 1 - p.ServiceStart) / p.PieceS) }
+
+// Creditable is creditable_k: SlotS for every slot interval that ends inside
+// piece k and lies inside the service, as pocc-verify counts it. A boundary
+// piece whose first slot is after its start therefore has one interval less.
+func (p Params) Creditable(k uint32) int64 {
+	if !p.Watched() {
+		return 0
+	}
+	hi := p.End(k)
+	if hi > p.ServiceEnd {
+		hi = p.ServiceEnd
+	}
+	// Interval j >= 1 ends at FirstSlotAt + j*SlotS; count Start(k) < end <= hi.
+	jmax := floorDiv(hi-p.FirstSlotAt, p.SlotS)
+	jmin := floorDiv(p.Start(k)-p.FirstSlotAt, p.SlotS) + 1
+	if jmin < 1 {
+		jmin = 1
+	}
+	if jmax < jmin {
+		return 0
+	}
+	return (jmax - jmin + 1) * p.SlotS
+}
+
+func floorDiv(a, b int64) int64 {
+	q := a / b
+	if a%b != 0 && (a < 0) != (b < 0) {
+		q--
+	}
+	return q
+}
+
+// FloorOutOfReach is the coverage condition of SS-12 (decision 48), the
+// integer form of D6: piece k can no longer reach min_coverage_bp when
+// (creditable_k - lost_k) * 10000 < min_coverage_bp * creditable_k.
+func FloorOutOfReach(creditable, lost int64, minCoverageBP uint16) bool {
+	return (creditable-lost)*10000 < int64(minCoverageBP)*creditable
 }
 
 // Pieces is the number of scheduled pieces.
@@ -91,6 +153,23 @@ func (p Params) Check() error {
 		return errors.New("timeout, shutdown latency or margin out of range")
 	case p.SettleBy < p.Deadline(p.Batch(p.Pieces()-1)):
 		return fmt.Errorf("settleBy %d before deadline(last batch) %d", p.SettleBy, p.Deadline(p.Batch(p.Pieces()-1)))
+	}
+	if !p.Watched() {
+		return nil
+	}
+	switch {
+	case p.SlotS < 0 || p.PieceS > 1<<40 || p.SlotS > p.PieceS:
+		return errors.New("slot length out of range")
+	case p.FirstSlotAt < p.ServiceStart || p.FirstSlotAt >= p.ServiceStart+p.SlotS:
+		return errors.New("first slot is not the first slot at or after service_start")
+	case p.BracketS <= 0 || p.BracketS > p.PieceS:
+		return errors.New("bracket out of range")
+	case p.MinCoverageBP > 10000:
+		return errors.New("min_coverage_bp above 10000")
+	case p.LivenessMissSlots == 0 || int64(p.LivenessMissSlots)*p.SlotS > p.ChallengeTimeoutS:
+		// SS-12: liveness_miss_slots x slot_s <= challenge_timeout_s keeps E the bound.
+		return fmt.Errorf("liveness_miss_slots %d x slot %d s not within challenge_timeout_s %d",
+			p.LivenessMissSlots, p.SlotS, p.ChallengeTimeoutS)
 	}
 	return nil
 }
@@ -207,9 +286,17 @@ type Lease struct {
 	// Expected is the seller's own view of what each challenged piece earns;
 	// a note below it is an underpayment for delivered service and stops the
 	// lease after that piece (lease evidence 5a.4). A zero expectation is an
-	// outage the seller's own verifier saw: a zero note is then correct.
+	// outage the seller's own verifier saw: a zero note is then correct, but
+	// the lease still stops after that piece (SS-14, decision 48).
 	Expected  []uint64
 	Underpaid []uint32 // pieces whose note was below the seller's expectation
+
+	// The watch of SS-12, per piece: seconds credited and seconds lost (not
+	// credited once their anchoring deadline passed), and the slot state.
+	Credited []int64
+	LostS    []int64
+	nextSlot uint32
+	missed   uint32 // consecutive slots without a live heartbeat
 
 	open      uint32 // index of the open challenge, valid if hasOpen
 	hasOpen   bool
@@ -222,8 +309,9 @@ func New(p Params) (*Lease, error) {
 	if err := p.Check(); err != nil {
 		return nil, err
 	}
-	return &Lease{P: p, Pieces: make([]PieceStatus, p.Pieces()), Expected: make([]uint64, p.Pieces()),
-		Batches: map[uint32]*Batch{}}, nil
+	n := p.Pieces()
+	return &Lease{P: p, Pieces: make([]PieceStatus, n), Expected: make([]uint64, n),
+		Credited: make([]int64, n), LostS: make([]int64, n), Batches: map[uint32]*Batch{}}, nil
 }
 
 func (l *Lease) log(at int64, f string, a ...any) {
@@ -304,7 +392,10 @@ func (l *Lease) Boot(now int64) error {
 // PieceEnd is called when piece k ends (at End(k)). It sends the challenge for
 // note k, carrying the amount the seller's own run of the verifier expects
 // for the piece (units x price of the record it sends with the challenge), and
-// makes piece k+1 provisional, or stops at the end of the service.
+// makes piece k+1 provisional, or stops at the end of the service. A zero
+// expectation means the seller's own verifier found the piece zero-payable
+// (D6, D7, or no credit): the lease then stops at once and piece k+1 is never
+// served (SS-14, decision 48); the challenge for k stays open as the final one.
 func (l *Lease) PieceEnd(k uint32, expected uint64, now int64) error {
 	if l.State != Running || l.Pieces[k] != Served || k != l.lastServe {
 		return fmt.Errorf("piece %d end in state %s, status %d", k, l.State, l.Pieces[k])
@@ -323,6 +414,10 @@ func (l *Lease) PieceEnd(k uint32, expected uint64, now int64) error {
 		l.State = Stopping
 		l.Stopped = "service_end"
 		l.log(now, "service end: stopping; final challenge %d open", k)
+		return nil
+	}
+	if expected == 0 {
+		l.stop(now, fmt.Sprintf("SS-14: piece %d is zero-payable", k))
 		return nil
 	}
 	if err := l.reserve(k+1, now); err != nil {
@@ -372,7 +467,11 @@ func (l *Lease) Note(k uint32, amount uint64, validUntil, now int64) error {
 	l.log(now, "note %d acknowledged: %d held", k, amount)
 	if amount < l.Expected[k] {
 		// The buyer paid less than the evidence shows: the note is still
-		// money and is kept, but the service stops after this piece.
+		// money and is kept, but the service stops after this piece (5a.4).
+		// A correct zero note needs no branch here: a zero expectation
+		// already stopped the lease at PieceEnd or in Watch (SS-14), so the
+		// note only closes it, and it stays in its batch so that the batch
+		// settles the earlier pieces.
 		l.Underpaid = append(l.Underpaid, k)
 		l.log(now, "note %d below the expected %d: underpayment", k, l.Expected[k])
 		l.closeFull(b, now)

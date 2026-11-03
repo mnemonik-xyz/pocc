@@ -225,6 +225,7 @@ Stacking this PR on #1 is a documentation dependency, not an approval to impleme
 Existing checks run on 3 Nov 2026:
 
 - `go test ./pkg/lease ./pkg/adapter/warrant`: passed.
+- After decision 48, `go test ./...`: passed. `pkg/lease/watch_test.go` covers scenarios 30 to 32 at the `pkg/lease` level. No broker drives `Watch` yet.
 - Companion `InvoiceEscrowTest`: 30 tests passed with its test verifier.
 
 Required new scenarios:

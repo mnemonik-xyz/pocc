@@ -263,7 +263,7 @@ length-prefixed (see [deviations](#8-deviations-from-the-spec)).
 | `cmd/*` | `pocc-agent`, `pocc-notary`, `pocc-verify`, `pocc-broker` | Done; smoke-tested locally against real drand |
 | `internal/sim` | Simulated acceptance tests T1, T3, T4, T6–T9 plus Stage 0 and policy checks | Done; T6 is Warrant gate D5 on the usage record |
 | `pkg/openstack` | Minimal OpenStack client for the broker | Done; used in the 2026-10-28 live test (pre-escrow fixtures, kept as history) |
-| `pkg/lease` | The seller's lease state machine and reservation ledger of lease evidence 5a.5 and 5a.6: provisional pieces, the challenge timeout, batches that close once, `deadline(b)`, SS-10; the DL-11 scenarios as tests | Done (PC-5); the service that drives it is PC-3 |
+| `pkg/lease` | The seller's lease state machine and reservation ledger of lease evidence 5a.5 and 5a.6: provisional pieces, the challenge timeout, batches that close once, `deadline(b)`, SS-10; the per-slot watch input and the SS-12 and SS-14 stops (decisions 47, 48); the DL-11 and DL-15 scenarios as tests | Done (PC-5; the `pkg/lease` part of PC-9, 3 Nov); the services that drive it are PC-3 and `pocc-broker watch` (PC-9, open) |
 | `pkg/adapter/warrant` | The only package that knows Warrant's shapes: policy check, usage records as Warrant JSON, external signer | Done (PC-1, PC-2); awaits Warrant's `sign-usage` and `check rent` |
 
 ## 7a. One mode: the policy decides the proof

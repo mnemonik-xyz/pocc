@@ -178,8 +178,9 @@ func TestExpiringNoteRefused(t *testing.T) {
 	answer(t, l, 0, cap, p.End(0)+40) // the right window is accepted
 }
 
-// DL-11: a missing middle piece below the floors gets a zero note; the batch
-// settles the other pieces.
+// DL-11 with SS-14 (decision 48): a middle piece below the floors gets a zero
+// note, which stays in its batch. The lease stops at once: piece 2 is never
+// served, and the batch settles the earlier piece.
 func TestZeroNoteMiddlePiece(t *testing.T) {
 	p := params(3, 3, 3*cap)
 	l, _ := New(p)
@@ -188,12 +189,20 @@ func TestZeroNoteMiddlePiece(t *testing.T) {
 	must(t, l.PieceEnd(0, cap, p.End(0)))
 	answer(t, l, 0, cap, p.End(0)+30)
 	must(t, l.PieceEnd(1, 0, p.End(1))) // the seller's own verifier saw the outage
-	answer(t, l, 1, 0, p.End(1)+30)     // the record shows it too: zero note, lease continues
-	must(t, l.PieceEnd(2, cap, p.End(2)))
-	answer(t, l, 2, cap, p.End(2)+30)
-	got, err := l.Settle(0, p.End(2)+600, true)
+	check(t, l)
+	if l.State != Stopping || l.Pieces[2] != Unserved || l.Ledger.Open != cap {
+		t.Fatalf("a zero-payable piece did not stop the lease: %s, piece 2 %d\n%s", l.State, l.Pieces[2], dump(l))
+	}
+	answer(t, l, 1, 0, p.End(1)+30) // the record shows it too: a correct zero note
+	if l.State != Stopped || !l.Batches[0].Closed || len(l.Batches[0].Notes) != 2 || len(l.Underpaid) != 0 {
+		t.Fatalf("state %s batch %+v\n%s", l.State, l.Batches[0], dump(l))
+	}
+	if err := l.PieceEnd(2, cap, p.End(2)); err == nil {
+		t.Fatal("piece 2 served after a zero-payable piece")
+	}
+	got, err := l.Settle(0, p.End(1)+600, true)
 	must(t, err)
-	if got != 2*cap || l.Ledger.Settled != 2*cap || l.Ledger.Lost != 0 {
+	if got != cap || l.Ledger.Settled != cap || l.Ledger.Lost != 0 || l.Ledger.Open != 0 || l.Ledger.Held != 0 {
 		t.Fatalf("settled %d ledger %+v", got, l.Ledger)
 	}
 }
@@ -323,7 +332,8 @@ func TestSettleByTooEarly(t *testing.T) {
 
 // Finding 6 of the 2 Nov audit: a zero note for a delivered piece is an
 // underpayment, not an outage. The seller keeps the note and stops after that
-// piece; three zero notes for outages the seller saw itself do not stop it.
+// piece. Regression for decision 48: three zero notes for outages the seller
+// saw itself used to leave the lease running; now the first one stops it.
 func TestUnderpaymentStops(t *testing.T) {
 	p := params(4, 4, 4*cap)
 	l, _ := New(p)
@@ -345,13 +355,16 @@ func TestUnderpaymentStops(t *testing.T) {
 	l2, _ := New(p)
 	must(t, l2.Accept(start-600))
 	must(t, l2.Boot(start-120))
-	for k := uint32(0); k < 3; k++ {
-		must(t, l2.PieceEnd(k, 0, p.End(k))) // three outages the seller saw
-		answer(t, l2, k, 0, p.End(k)+30)
+	must(t, l2.PieceEnd(0, 0, p.End(0))) // an outage the seller saw: piece 1 is never reserved
+	answer(t, l2, 0, 0, p.End(0)+30)
+	if l2.State != Stopped || len(l2.Underpaid) != 0 || l2.Pieces[1] != Unserved || l2.Ledger.Lost != 0 || l2.Ledger.Open != 0 {
+		t.Fatalf("an outage zero note left the lease running: %s, piece 1 %d, ledger %+v\n%s",
+			l2.State, l2.Pieces[1], l2.Ledger, dump(l2))
 	}
-	if l2.State != Running || len(l2.Underpaid) != 0 {
-		t.Fatalf("outage zero notes stopped the lease: %s", l2.State)
+	if err := l2.PieceEnd(1, 0, p.End(1)); err == nil {
+		t.Fatal("a second unpaid hour was served")
 	}
+	check(t, l2)
 }
 
 // Finding 5: extreme parameters are refused, and the arithmetic is checked.
