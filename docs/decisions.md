@@ -85,6 +85,7 @@ Buyer-only underpayment, competing proofs and cutoff submissions must leave the 
 The meter commits final records and batches once, and one terminal stop statement per lease. Interim evidence cannot authorize a payment.
 Decision 46's PE-9a/PE-9b are on hold until the owner selects mode priority; their buyer-note format is not the dispute witness.
 Decision 47 applies to every rent mode: the seller's per-slot liveness watch and evidence custody bound what a buyer gains by stopping the agent.
+The dispute mechanism is a settlement mode with no referee. It is not the referee dispute of decision 20 and integration §8, which stays deferred.
 
 ## Decisions in full
 

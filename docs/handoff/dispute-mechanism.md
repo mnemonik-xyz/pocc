@@ -11,6 +11,7 @@ The owner named this flow the **dispute mechanism**.
 The normal path settles on buyer acknowledgement. The dispute path settles through a delivery proof after the response period.
 "Fallback" below means the proof-based dispute path. Silence enables it but does not prove delivery.
 This version resolves payment through the funded policy; it does not introduce a human arbitrator or appeals.
+It is not the referee dispute of integration §8 (decision 20), which stays deferred.
 
 The contract and evidence specification is
 `policy-execution/docs/handoff/05-rent-dispute-mechanism.md`.
