@@ -159,7 +159,7 @@ sequenceDiagram
     P->>P: delete server
 
     V->>N: fetch entries and inclusion proofs
-    V->>V: Receipt (request, escrow order, boot, heartbeats, proofs); no bill, no signature
+    V->>V: Receipt (request, escrow order, boot, heartbeats, proofs) — no bill, no signature
     V->>D: fetch every round independently
     V->>C: check roots and block times
     V->>V: verify chain, bind to h0 and policy, credit per hour
