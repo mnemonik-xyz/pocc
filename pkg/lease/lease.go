@@ -3,7 +3,10 @@
 // closing (SS-11), note windows (BG-6) and the deadline formula. It moves no
 // money and signs nothing; it decides what the seller's service does next and
 // records every reservation exactly once. The simulation in lease_test.go runs
-// the DL-11 scenarios against it.
+// the DL-11 scenarios against it. Decisions 47 and 48 add the coverage stop and
+// the zero-payable stop (SS-12, SS-14) here, and the slot-by-slot decision
+// logic of the liveness and coverage watch in watch.go; watch_test.go runs the
+// DL-15 regression cases.
 package lease
 
 import (
@@ -43,6 +46,12 @@ type Params struct {
 	Ceiling           uint64 // token base units, the lease
 	BatchSize         uint32
 	SettleBy          int64 // the order's settleBy
+
+	// Decision 47 and 48 (lease evidence SS-12): the liveness and coverage
+	// watch. Zero values disable the watch's stops; Check bounds them.
+	MinCoverageBP     uint16 // the policy's min_coverage_bp (D6); 0 disables the coverage stop
+	LivenessMissSlots uint32 // consecutive slots without a valid anchored heartbeat that stop the lease; 0 disables
+	SlotS             int64  // the PoCC slot length (60 s)
 }
 
 // Pieces is the number of scheduled pieces.
@@ -89,6 +98,12 @@ func (p Params) Check() error {
 		return errors.New("challenge timeout or settlement margin missing, or negative shutdown latency")
 	case p.ChallengeTimeoutS > p.PieceS || p.ShutdownLatencyS > p.PieceS || p.SettlementMarginS > 1<<40:
 		return errors.New("timeout, shutdown latency or margin out of range")
+	case p.MinCoverageBP > 10000:
+		return errors.New("min_coverage_bp above 10000")
+	case p.LivenessMissSlots > 0 && (p.SlotS <= 0 || p.SlotS > p.PieceS):
+		return errors.New("liveness watch needs a slot length inside a piece")
+	case p.LivenessMissSlots > 0 && int64(p.LivenessMissSlots) > p.ChallengeTimeoutS/p.SlotS:
+		return errors.New("SS-12: liveness_miss_slots x slot_s above challenge_timeout_s")
 	case p.SettleBy < p.Deadline(p.Batch(p.Pieces()-1)):
 		return fmt.Errorf("settleBy %d before deadline(last batch) %d", p.SettleBy, p.Deadline(p.Batch(p.Pieces()-1)))
 	}
@@ -207,7 +222,8 @@ type Lease struct {
 	// Expected is the seller's own view of what each challenged piece earns;
 	// a note below it is an underpayment for delivered service and stops the
 	// lease after that piece (lease evidence 5a.4). A zero expectation is an
-	// outage the seller's own verifier saw: a zero note is then correct.
+	// outage the seller's own verifier saw: a zero note is then correct, but
+	// the lease stops after that piece all the same (SS-14, decision 48).
 	Expected  []uint64
 	Underpaid []uint32 // pieces whose note was below the seller's expectation
 
@@ -319,6 +335,15 @@ func (l *Lease) PieceEnd(k uint32, expected uint64, now int64) error {
 	l.Expected[k] = expected
 	l.open, l.hasOpen, l.deadline = k, true, l.P.End(k)+l.P.ChallengeTimeoutS
 	l.log(now, "challenge %d sent, expecting %d; deadline %d", k, expected, l.deadline)
+	if expected == 0 {
+		// SS-14: never continue after a zero-payable piece, also when the
+		// buyer will sign zero correctly. Piece k+1 is not served; the zero
+		// note still keeps the indices consecutive and settles with its batch.
+		l.State = Stopping
+		l.Stopped = fmt.Sprintf("SS-14: piece %d is zero-payable", k)
+		l.log(now, "stopping: piece %d zero-payable; final challenge %d open", k, k)
+		return nil
+	}
 	if k+1 >= l.P.Pieces() {
 		l.State = Stopping
 		l.Stopped = "service_end"
@@ -383,6 +408,12 @@ func (l *Lease) Note(k uint32, amount uint64, validUntil, now int64) error {
 		}
 		return nil
 	}
+	if amount == 0 && l.State == Running {
+		// SS-14: a zero note for any reason ends the lease after this piece.
+		l.closeFull(b, now)
+		l.stop(now, fmt.Sprintf("SS-14: zero note for piece %d", k))
+		return nil
+	}
 	if l.State == Running && l.Pieces[k+1] == Provisional {
 		// The gate for piece k+1 passed: provisional becomes served.
 		l.Pieces[k+1] = Served
@@ -426,6 +457,49 @@ func (l *Lease) Tick(now int64) {
 		return
 	}
 	l.nextFinal(now)
+}
+
+// CoverageReachable is the integer form of D6 applied to what is still
+// possible: with lost seconds of creditable already irrecoverable, can the
+// piece still reach min_coverage_bp? (creditable - lost) * 10000 >=
+// min_coverage_bp * creditable, in 128-bit arithmetic.
+func CoverageReachable(creditable, lost uint64, minCoverageBP uint16) bool {
+	if lost > creditable {
+		lost = creditable
+	}
+	lh, ll := bits.Mul64(creditable-lost, 10000)
+	rh, rl := bits.Mul64(uint64(minCoverageBP), creditable)
+	return lh > rh || (lh == rh && ll >= rl)
+}
+
+// running reports whether piece k is running now: the served piece, or the
+// provisional piece after it.
+func (l *Lease) running(k uint32) bool {
+	if l.State != Running || k >= l.P.Pieces() {
+		return false
+	}
+	return (l.Pieces[k] == Served && k == l.lastServe) || l.Pieces[k] == Provisional
+}
+
+// Coverage is the coverage condition of SS-12 (decision 48): lost seconds of
+// piece k's creditable seconds can no longer be credited, because their
+// anchoring deadline passed. When the floor is out of reach, the lease stops
+// now instead of serving the rest of a piece that D6 makes zero. It returns an
+// error for a piece that is not running, and does nothing without a floor.
+func (l *Lease) Coverage(k uint32, creditable, lost uint64, now int64) error {
+	switch {
+	case !l.running(k):
+		return fmt.Errorf("coverage for piece %d, which is not running", k)
+	case creditable == 0 || creditable > uint64(l.P.PieceS):
+		return fmt.Errorf("creditable %d outside (0, piece_s]", creditable)
+	case l.P.MinCoverageBP == 0:
+		return nil
+	}
+	if !CoverageReachable(creditable, lost, l.P.MinCoverageBP) {
+		l.stop(now, fmt.Sprintf("SS-12: piece %d cannot reach min_coverage_bp %d (%d of %d creditable seconds lost)",
+			k, l.P.MinCoverageBP, lost, creditable))
+	}
+	return nil
 }
 
 // Stop ends the lease on the seller's or the buyer's initiative.
