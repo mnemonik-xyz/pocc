@@ -70,6 +70,42 @@ handoff (`docs/handoff/`).
 | 44 | 2026-11-02 | One meter signature over the batch's records (`warrant/usage-batch-signed/v1`) replaces the per-record signatures in the proof; the per-hour records and the notes' binding are unchanged; the guest accepts either form (D2); the guardrail re-signs at batch close (BG-7) | Taken, with the owner | PE-0 §3, §4; lease evidence 5a.2, 5a.3, 5a.5, BG-7, DL-14; `pkg/adapter/warrant`, `pocc-verify` | Per-record signatures only: 16.2 M cycles per daily batch instead of 9.0 M |
 | 45 | 2026-11-02 | The batch is signed from the hourly records persisted at each hour's signing, never from records regenerated from the receipt; the grace is `G = 2 × challenge_timeout_s + M` with `M` budgeted for the per-record fallback proof; DL-13 and PE-8 measure verified succinct and Groth16 receipts, in both signature forms, under concurrent load | Taken | Lease evidence 5a.2, 5a.5, BG-7, DL-13; `pkg/adapter/warrant`, `pkg/lease`, `bench/rent-guest` | Sign regenerated records (a receipt re-run could change what was signed); budget `G` for the fast path only (the fallback then misses the deadline) |
 | 46 | 2026-11-02 | Buyer-note mode only. Signature verification of the rent case moves from the guest to Solidity, in the settle transaction: `WarrantEscrow.settle(seal, journal, facts)` hands `facts` (the batch's records and notes with their 65-byte signatures, index order) to a stateless `RentFactsVerifier` pinned per `schemaId` beside the image ID; it recomputes each digest, recovers the signer (low-s, no zero address), compares it with the `meterAddr` and `acceptanceAddr` words of the journal, and recomputes `factsHash` over the signature-free bytes, which must equal the journal's. The guest derives the two addresses from the policy's keys, keeps the nine pre-gate checks except the two signature checks, D1 and D3–D9, the credential signature and the rule tree, and commits `factsHash`, `meterAddr`, `acceptanceAddr`. No registry, no attestation state. Amends 40 (the escrow gains `facts` and one verifier call); the mode is a per-chain choice by `schemaId`, two images from one guest source. Supersedes 44 and, of 45, the re-signing wait and the fallback proof if taken; persisted records and 43's margin stay, `G = challenge_timeout_s + settlement_margin_s` | Proposed. PE-9a and PE-9b on hold pending mode priority; PC-8 is comparative only. Updated 3 Nov after review | Integration §6.2 steps 10–11, §6.3, §7, PE-9a, PE-9b, PC-8; handoffs `docs/handoff/`; PE-0 §3, §5, §6; `pkg/adapter/warrant`; `bench/rent-guest`; `WarrantEscrow` | Additive to the contract: drop `facts` and the verifier call, the guest verifies signatures again, 44 and 45 return; batches settled under 46 stay valid under 46's image |
+| 47 | 2026-11-03 | The agent runs in the tenant's machine, so the tenant can stop it, block it or read its key; no rule prevents that. The seller watches the agent every slot (lease evidence SS-12): `liveness_miss_slots` consecutive slots without a valid anchored heartbeat, an early final heartbeat, or an entry that fails the verifier's content check stop the lease; records come from the last valid receipt prefix, and the dispute-mode cutoff comes from billing eligibility, not heartbeats; `liveness_miss_slots × 60 s ≤ challenge_timeout_s`, so `E` stays the bound; the seller stores every anchored entry within one slot (SS-13) and uses a notary that keeps the first entry per agent and sequence number; the listing states the rule. Usage records bind their receipt hash, so a false record is detected by the seller's own verifier run and refutable by anyone; settlement still trusts the meter's signature until X-1 | Taken, with the owner, 3 Nov; the last-piece rule is decided by 48; sidecar and observer kept as research | Lease evidence 5a.4, 5a.5, SS-12, SS-13, DL-15; integration §3, §8.1, §10 PC-9, §11; architecture §1, §2a; dispute handoffs; `pkg/lease`, `pocc-broker` | Drop the watch: the seller's loss for a stopped agent returns to the challenge timeout of `E`; anchored evidence is unaffected |
+| 48 | 2026-11-03 | Two more stop conditions, beside the five-consecutive-slot rule of 47: the seller stops as soon as the current piece can no longer reach its coverage floor (`(creditable_k − lost_k) × 10000 < min_coverage_bp × creditable_k`, where `lost_k` counts every interval, consecutive or scattered, that was not credited once its anchoring deadline passed), and it never continues after a zero-payable piece, even when the buyer signs zero correctly; zero records stay valid for accounting and for settling earlier pieces; D6 applies to the last eligible piece unchanged | Taken, with the owner | Lease evidence SS-12, SS-14, 5a.5, DL-11, DL-15; integration §3, §7, PC-9, §11; dispute handoffs; `pkg/lease` | Charge pro rata without the floor (changes the commercial promise, still needs a defence against sustained zero-credit operation); or drop both conditions: a buyer can then keep every hour just below the floor and get it unpaid |
+| 49 | 2026-11-06 | Two settlement paths, selected by the policy's `min_assurance`. Happy path in every lease: the honest buyer signs the hourly note and the batch acknowledgement, and the acknowledgement pays the batch without a proof. Dispute path, provider-engaged after `ack_timeout_s` of buyer silence, only when `min_assurance = 1`: the evidence authority is the **enclave agent**, the PoCC agent and verifier in a hardware-attested component whose key neither the tenant's OS nor the provider's host can read, with the attestation report binding that key and the pinned measurement; the enclave is the meter key of the lease and the proof settles the eligible prefix from its records. With `min_assurance = 0` (no enclave) there is no dispute path at all: a missing note or acknowledgement stops the lease after its timeout (SS-9, SS-12) and the loss stays within `E`. Not pursued: a third-party meter, a sidecar or observer the tenant cannot stop, X-1 as a prerequisite | Taken, with the owner ("we no more spend efforts on anything unworking") | Dispute handoffs (pocc, policy-execution 05); lease evidence 5a.4, 5a.5, SS-9, SS-12; integration §3, §7, §8, §10; architecture §2a; warrant `compute-rent/spec.md`; decision 01 (Stage 1 is now the enclave agent) | Reopen the third-party meter or the observer research (both recorded); or allow the dispute path at `min_assurance = 0`, which pays on evidence the tenant can stop or forge |
+
+## Dispute mechanism: the owner's ruling of 6 Nov
+
+On 3 Nov 2026 the owner requested payment on the buyer's delivery acknowledgement, or a
+provider-submitted proof after a response period, and named it the dispute mechanism
+([change specification](handoff/dispute-mechanism.md)). The 3 Nov draft left two
+business assumptions for review: the settlement unit (service batches) and the evidence
+authority of the proof path (a meter agreed by both parties). On 6 Nov the owner ruled
+(decision 49):
+
+1. The happy path is optimistic: an honest buyer signs each hour's note and each batch's
+   acknowledgement, and the acknowledgement pays the batch. No proof is made on this path.
+2. If the buyer does not sign the receipt of the resources within the response period,
+   the provider can engage the dispute path. That path **requires a secure enclave**: the
+   PoCC agent and verifier run in a hardware-attested component whose key the tenant
+   cannot read (architecture §2a). Its records are the dispute evidence.
+3. Without an enclave, there is no dispute path. A missing signature stops the lease after
+   its timeout, as in the buyer-note mode (lease evidence SS-9, SS-12). The provider's
+   loss stays within `E`.
+4. No more effort goes to anything that does not work: the third-party meter, the sidecar
+   and observer research, and X-1 as a prerequisite are not pursued.
+
+Service batches stay the settlement unit (decision 48's stop rules and the batch
+accounting of 38, 41 and 45 are unchanged). Both settlement paths require the funded
+provider as caller; acknowledgement also requires the buyer signature and proof settlement
+requires the pinned receipt and the enclave's records. Buyer-only underpayment, competing
+proofs and cutoff submissions must leave the obligation unchanged. The meter commits final
+records and batches once, and one terminal stop statement per lease. Decision 46's
+PE-9a/PE-9b stay on hold; their buyer-note format is not the dispute witness. Decision 47
+applies to every lease: the per-slot liveness watch and evidence custody bound what a
+buyer gains by stopping the agent, with or without the enclave. The dispute mechanism is a
+settlement mode with no referee; the referee dispute of decision 20 and integration §8
+stays deferred.
 
 ## Decisions in full
 
@@ -500,3 +536,140 @@ PE-0's review, PE-3 and PE-6: the PE-0 amendment, `settle(seal, journal, facts)`
 images from one guest source, one batch settled end to end). *Reversal:* drop
 `facts` and the verifier call; the guest verifies signatures again and 44 and 45
 return; batches settled under 46 settle under 46's image and stay valid.
+
+**47 The tenant controls the agent; the seller watches it every slot.** *Found by:* the
+review of 3 Nov of the dispute mechanism, asking whether drand and the anchor already make
+the meter's statement checkable and whether the buyer can be stopped from switching the
+agent off. *Facts:* the agent runs inside the tenant's machine (architecture §1). The
+tenant has full control of that machine. It can stop the agent, block its network, or
+read the agent key from memory and sign with it. Stage 0 cannot prevent this, and Stage 1
+as specified does not either. The tenant cannot change anchored evidence: the notary keeps
+the first entry for each agent and sequence number and refuses a different one
+(`pkg/notary`, `ErrFork`), and the verifier's fork check reads that log. The extracted key
+can still damage the receipt. The notary checks only the signature and the sequence of an
+entry, not its contents, so it accepts a correctly signed but malformed heartbeat (a wrong
+round, a wrong beacon value, a broken chain link, an entry after a final heartbeat).
+`pkg/receipt.Assemble` includes every entry, and the verifier then marks the whole receipt
+`INVALID`, which gives zero usage records. The earlier prefix still verifies: anchored
+evidence is not erased, but a receipt that includes the bad entry is unusable (review of
+3 Nov, reproduced). *Decision (option A of the review):* do not try to force the
+agent to run; make stopping it end the lease. The seller reads the notary's entries every
+slot and checks each new entry's contents with the verifier before it counts as liveness.
+When `liveness_miss_slots` consecutive slots (default 5) have no valid anchored heartbeat
+inside the bracket, or a final heartbeat arrives before `service_end`, or an entry fails
+the content check, the lease goes to Stopping (lease evidence SS-12). The seller keeps the
+last valid receipt prefix: the longest run of entries from the boot proof that verifies
+with no error code. Usage records and settlement use that prefix only, never a receipt
+that includes a failed entry (SS-13). The seller keeps `liveness_miss_slots × 60 s ≤
+challenge_timeout_s`, so `E` of lease evidence 5a.5 stays the single bound on its loss.
+The seller stores every anchored entry and its inclusion proof within one slot (SS-13),
+and uses a notary that it can read and that keeps the first entry. The listing states that
+disabling, blocking or changing the agent ends the lease and that time without anchored
+heartbeats is not paid. In the dispute mode, the terminal stop statement records a stop
+of this kind. Its cutoff comes from authenticated billing eligibility, never from
+heartbeats: the last piece that passed the continuation gate. Heartbeats measure delivery
+inside eligible pieces only. A provisional next piece can have valid heartbeats and still
+be unbillable.
+*Detection, credited:* each usage record binds its receipt hash (`deliverable_hash`), and
+`pocc-verify` is deterministic, so the seller's own verifier run detects a false or
+conflicting record at once and anyone can refute it from the kept receipt. That is
+detection, not enforcement: settlement trusts the meter's signature (decision 35), there is
+no referee (decision 20), and while the development anchor is in use a refutation also
+rests on the notary's anchor key. Enforcement is X-1, which needs BLS verification of the
+drand rounds, the Arc anchor (PC-4) and a witness design. *Decided by 48:* D6 applies to the
+last eligible piece unchanged; the seller limits the loss by stopping early.
+*Kept as research (option B), at the owner's request:* a sidecar that the tenant cannot
+stop, and an observer. Either must be tenant-proof and seller-proof at once: a sidecar or
+observer that the seller controls without attestation could fake liveness, which returns
+the overbilling problem. Candidates, open questions and exit criteria are in
+`docs/research-sidecar-observer.md`: a privileged sidecar in a confidential VM (SEV-SNP
+VMPL0, Intel TDX partitioning), a sidecar VM in the seller's account, a host agent at the
+cloud, a seller-run observer, a cloud-state observer with notarised TLS, and a third-party
+observer. *Work:* PC-9 (integration §10).
+*Reversal:* drop the watch and the custody rule; the seller's loss for a stopped agent
+returns to the challenge timeout of `E`; anchored evidence and existing records are
+unaffected.
+
+**48 Stop when the coverage floor is out of reach, and after any zero-payable piece.**
+*Found by:* the review of 3 Nov of decision 47, which reproduced a pattern that the
+five-consecutive-slot rule misses. The buyer drops fewer than `liveness_miss_slots` slots
+at a time, so the watch never fires, but the hour ends at 3,360 credited seconds against
+the 3,420 that `min_coverage_bp = 9500` needs for a full middle hour. D6 then makes the
+hour a zero note, and the lease continued, so the buyer could repeat this every hour and
+get the machine unpaid. *Decision:* two more stop conditions; the rule of 47 stays.
+(1) The seller stops as soon as the current piece can no longer reach its coverage floor.
+An interval is irrecoverably missed when its anchoring deadline (the round time of its
+later slot plus `bracket_s`) has passed and the verifier, over the valid prefix, did not
+credit it. `lost_k` is the sum of those seconds in piece k, consecutive or scattered. The
+seller stops when `(creditable_k − lost_k) × 10000 < min_coverage_bp × creditable_k`, the
+integer form of D6. At 9500, a middle hour stops at the fourth lost interval and a
+boundary hour of 3,540 creditable seconds at the third (lease evidence SS-12). (2) The
+seller never continues after a zero-payable piece (D6, D7, or a zero note for any
+reason), also when the buyer signed zero correctly for an honest outage. That is the
+availability tradeoff. The zero record and note stay valid: they keep the indices
+consecutive, enter the accounting, and the batch settles the earlier pieces (SS-14).
+*Consequence:* the funded payment rules do not change; the seller stops further service
+instead of charging for evidence that the policy rejects. Per lease, the seller serves at
+most one zero-payable piece, and its loss stays within `E`. `pkg/lease` changes: today it
+continues after a zero note that its own verifier also expected (`lease.go`, the
+underpayment gate); under 48 it stops (PC-9). D6 applies to the last eligible piece
+unchanged, which closes the question that 47 left open. *Residual risk:* a per-lease stop
+cannot stop a buyer that repeats the pattern across new leases. Production needs admission
+controls, or an explicitly agreed provisioning or minimum charge in the listing.
+*Alternatives:* charge pro rata and remove the floor: it changes the commercial promise,
+and it still needs a defence against sustained zero-credit operation; recorded, not taken.
+*Tests:* consecutive gaps, scattered gaps, boundary hours, the deadline rule, and zero
+acknowledgements (lease evidence DL-15). *Reversal:* remove the two conditions; the
+pattern above returns.
+
+**49 Two paths, selected by `min_assurance`; the dispute path needs the enclave agent.**
+*Owner's words (6 Nov):* "Let's make it sound at last. We no more spend efforts on
+anything unworking. 1 we use optimistic happy path with honest buyer 2 if buyer not signing
+the resources received fact in a period of time - dispute mechanic can be engaged by a
+provider. But it should use secure enclaves. If no enclaves available, after not received
+signature - lease stops." *Facts:* the 3 Nov dispute draft (policy-execution handoff 05,
+pocc handoff) made the proof path depend on evidence available without the buyer, and
+proposed a meter agreed by both parties as the pilot evidence authority. Such a meter adds
+a third party and no cryptographic check (research note §3). The in-guest agent of Stage 0
+is not that evidence either: the tenant can stop it, block it or read its key (47), and
+Stage 1 as first specified (an attested launch measurement of the tenant's image, decision
+01) does not prevent the tenant from reading the key, because the tenant is root inside
+the attested machine. The one placement that is both tenant-proof and seller-proof is a
+privileged, attested component inside the confidential machine: the agent at a privilege
+level that the tenant's system cannot read (SEV-SNP VMPL0, an SVSM, or the equivalent
+partitioning of another TEE), with memory that the host cannot read either (research note
+§2, candidate A, first row). *Decision:* (1) Every lease has the happy path: the buyer
+signs the hourly note (continuation, 5a.5) and the batch acknowledgement, and the
+acknowledgement pays the batch without a proof, under the provider's consent and the
+shared bounds of the dispute handoff §6. (2) A lease with `min_assurance = 1` also has the
+dispute path. The **enclave agent** is its evidence authority: the PoCC agent and the
+verifier run inside the attested component; the agent key is generated there and never
+leaves; the attestation report binds the key to the measurement that `meter_spec` pins;
+the enclave signs each hour's final usage record after it holds the anchoring proofs of
+the hour's last slot, and records the buyer's signed notes it is given, so that billing
+eligibility (the continuation gate) is in its statement. `meter_key` of such a lease is the
+enclave's key, not the buyer's guardrail key (25 and 35 apply to `min_assurance = 0`
+only). After `ack_timeout_s` without the buyer's acknowledgement, the provider submits the
+proof over the enclave's records; the proof pays the eligible prefix up to the last signed
+record. (3) A lease with `min_assurance = 0` has no dispute path: the agent is the
+tenant's, its records prove nothing against the tenant, so a missing note or
+acknowledgement stops the lease after `challenge_timeout_s` or `ack_timeout_s` (SS-9,
+SS-12), the batch settles what the buyer did sign, and the loss stays within `E`.
+The policy field selects the mode; no new field is needed. Decision 01's Stage 1 now
+means the enclave agent, not only an attested launch of the tenant's image.
+*Consequence:* the dispute handoffs replace the third-party meter with the enclave agent;
+lease evidence 5a.4 gains the rule and the table gains a row; `research-sidecar-observer.md`
+is closed, with candidate A's first row adopted and the rest not pursued; X-1 is no longer
+on any path (the enclave's records are attested, the guest verifies their signature, as
+today). The Stage 1 prototype must answer one open point before the dispute path is
+offered: whether the tenant's system can starve the privileged component without stopping
+the machine. If it can, the effect is a stop (47), never a false credit, so the provider's
+exposure stays bounded; the lease still ends. *Not pursued:* a meter run by a third
+party; an observer; a sidecar outside the machine; a dispute path at `min_assurance = 0`.
+*Tests:* a lease at `min_assurance = 0` with buyer silence stops and never reaches a proof;
+a lease at `min_assurance = 1` with buyer silence settles the eligible prefix by proof; a
+record signed by a key without a valid attestation for the pinned measurement is refused
+(D7 with the attestation check); the tenant stopping the machine ends credit at the last
+anchored slot in both modes. *Reversal:* reopen the third-party meter or the observer
+(both recorded); or allow the dispute path at `min_assurance = 0`, which pays on evidence
+the tenant can stop or forge.

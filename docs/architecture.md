@@ -12,13 +12,14 @@ for credited hours only.
 
 What this does and does not establish (audit of 2 Nov, finding 1):
 
-| Property of "delivered compute" | Stage 0 | Stage 1 (SEV-SNP) | Later |
+| Property of "delivered compute" | Stage 0 | Stage 1 (enclave agent, SEV-SNP) | Later |
 |---|---|---|---|
-| Instance availability, sampled every 60 s | Yes, if the provider does not extract the agent key and run the signer elsewhere | Yes: the key is born inside an attested machine | — |
+| Instance availability, sampled every 60 s | Yes, if the provider does not extract the agent key and run the signer elsewhere; only while the tenant lets the agent run (§2a) | Yes: the key is born inside an attested machine; the tenant can still stop the agent | Evidence the tenant cannot reach (decision 47) |
 | Hardware identity and launched image | No (Nova's own record only) | Yes: launch measurement, VCEK chain | — |
 | Resource allocation (vCPUs, memory, GPU) | No | Partly: the attested image reads the hardware it sees | Stage 1 counters and GPU evidence (spec §11) |
 | Performance | No | No | Throughput checks, `tau_max` (deferred, decision 10) |
 | Job correctness | No | No | Job commitments, sampling, re-execution (decision 02) |
+| Evidence the tenant cannot stop, forge or read the key of | No: the agent is the tenant's (§2a) | Yes: the agent key lives in the attested component, outside the tenant's system (decision 49) | — |
 
 Two timely heartbeats are two observations. Availability between them is the Stage 0
 assumption, bounded by the slot length; duty cycling inside a slot is not caught
@@ -31,7 +32,7 @@ assumption, bounded by the slot length; duty cycling inside a slot is not caught
 | Tenant | Buyer's machine | Ed25519 signing key, X25519 seal key | Its own request and policy | — |
 | Provider (seller) | A clearly identified reseller renting the machine from an OpenStack cloud under its own account, with an explicit spending limit at the cloud (pilot arrangement, decision 33) | Escrow recipient key, cloud credentials | Accepting the escrow order; paying the cloud's own invoice; terminating the machine and its volumes | Meter readings, coverage, billing |
 | Cloud (amnezia.cloud) | OpenStack | — | Nothing of Warrant; it does not accept Warrant payments | Running the machine; it bills the reseller on its own terms |
-| Agent (`pocc-agent`) | Inside the tenant's VM | Agent key and disclosure seed, created at boot | Producing heartbeats (Stage 0: assumes the provider does not read VM memory) | — |
+| Agent (`pocc-agent`) | Inside the tenant's VM | Agent key and disclosure seed, created at boot | Producing heartbeats (Stage 0: assumes the provider does not read VM memory) | Running: the tenant can stop it, block it or read its key (§2a) |
 | Notary (`pocc-notary`) | Any host with a public IP | Anchor wallet or anchor key | Nothing; everything it serves is checkable | Time, order, content |
 | Beacon (drand quicknet) | Public network | — | Unpredictable values on a fixed 3 s schedule | — |
 | Anchor chain | The chain Warrant's escrow uses | — | Block time and append-only history | — |
@@ -86,6 +87,57 @@ flowchart LR
     C --> V
     N -. "inclusion proof per entry" .-> V
 ```
+
+## 2a. The tenant controls the agent
+
+The agent runs inside the tenant's VM, and the tenant has full control of it. The
+tenant can stop the agent, block its network, or read the agent key from memory and sign
+with it. Stage 0 cannot prevent this (decision 47). An attested launch of the tenant's
+image does not prevent it either, because the tenant is root inside the attested machine.
+Stage 1 therefore means the **enclave agent** (decision 49): the agent and the verifier run
+in a privileged, attested component inside the confidential machine that the tenant's
+system cannot read or stop short of stopping the machine (SEV-SNP VMPL0 or an SVSM, or the
+equivalent partitioning of another TEE), with memory the provider's host cannot read. The
+agent key is generated there and never leaves; the attestation report binds it to the
+measurement that `meter_spec` pins. That key is the lease's meter key, and its records
+are the evidence of the dispute path. Without the enclave agent (`min_assurance = 0`), a
+lease has no dispute path: a note or acknowledgement that does not arrive in time stops
+the lease, and what the buyer signed settles (decision 49).
+
+What the tenant cannot do:
+
+- It cannot change anchored evidence. The notary keeps the first entry for each agent and
+  sequence number and refuses a different one (`ErrFork`). The verifier's fork check
+  reads the same log.
+- It cannot make the earlier prefix invalid. The receipt over the entries up to the last
+  valid one still verifies.
+
+What the tenant can do with the extracted key, besides stopping the agent:
+
+- It can submit a correctly signed but malformed heartbeat. The notary checks only the
+  signature and the sequence, not the contents, so it accepts the entry. A receipt that
+  includes it is `INVALID` and gives zero usage records.
+- It can sign an early final heartbeat, which ends credit from that point on.
+
+Therefore the seller checks each new entry with the verifier before it counts as
+liveness, keeps the last valid receipt prefix, and builds usage records from that prefix
+only. It stops the machine on a failed entry, an early final heartbeat, or
+`liveness_miss_slots` slots without a valid anchored heartbeat (Warrant lease evidence
+SS-12). It stores every anchored entry within one slot (SS-13). Time without valid
+anchored heartbeats is never paid, and heartbeats inside a provisional piece are not
+billable by themselves. The seller also stops as soon as the current hour can no longer
+reach its coverage floor, and after any zero-payable hour (decision 48), so a tenant that
+drops a few slots each hour cannot keep the machine unpaid.
+
+The usage record that the meter signs binds the receipt hash, and the verifier is
+deterministic. The seller's own verifier run therefore detects a false record at once,
+and anyone can refute it from the kept receipt. Settlement still trusts the meter's
+signature until the verifier runs inside the guest (X-1).
+
+The research on a sidecar and an observer
+([research-sidecar-observer.md](research-sidecar-observer.md)) is closed by decision 49:
+its first candidate, the privileged component inside the confidential machine, is the
+enclave agent; the other candidates are not pursued.
 
 ## 3. Components and trust boundaries
 
@@ -159,7 +211,7 @@ sequenceDiagram
     P->>P: delete server
 
     V->>N: fetch entries and inclusion proofs
-    V->>V: Receipt (request, escrow order, boot, heartbeats, proofs); no bill, no signature
+    V->>V: Receipt (request, escrow order, boot, heartbeats, proofs) — no bill, no signature
     V->>D: fetch every round independently
     V->>C: check roots and block times
     V->>V: verify chain, bind to h0 and policy, credit per hour
@@ -257,5 +309,6 @@ never imports an adapter. `pkg/adapter/warrant` is the first.
   after its round earns nothing and is counted in the verdict's `late`; an anchor
   time before its round is fatal (`E_ANCHOR_TIME`). Found in the live test, where a
   paused VM's frozen clock produced stale heartbeats.
-- **Stage 1 (SEV-SNP) is not implemented.** A request with attestation `sev-snp`
-  verifies as `E_SNP_UNSUPPORTED`.
+- **Stage 1 (the enclave agent on SEV-SNP) is not implemented.** A request with
+  attestation `sev-snp` verifies as `E_SNP_UNSUPPORTED`. Until it exists, every lease
+  runs at `min_assurance = 0` and has no dispute path (decision 49).

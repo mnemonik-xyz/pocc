@@ -6,7 +6,10 @@ for proven hours through [Warrant](https://github.com/mnemonik-xyz/warrant).
 
 - **Stage 0** (this build) runs on any OpenStack cloud, including amnezia.cloud,
   without hardware attestation.
-- **Stage 1** adds an AMD SEV-SNP boot report when such hosts are available.
+- **Stage 1** is the enclave agent: the agent and verifier in an attested component on
+  AMD SEV-SNP hosts, whose key the tenant cannot read. Only a lease with that assurance
+  has a dispute path; without it, a buyer that stops signing stops the lease
+  ([decision 49](docs/decisions.md)).
 
 Read [docs/architecture.md](docs/architecture.md) for roles, diagrams and the
 proving cycle, [docs/run-stage0.md](docs/run-stage0.md) to run a cycle on OpenStack, and
@@ -29,6 +32,11 @@ each heartbeat existed. The verifier checks the chain, the beacon values and the
 anchors, credits only unbroken time, and writes hourly usage records that Warrant's
 escrow checks the provider's notes against. PoCC has no mode of its own: it runs
 when the executed policy names it as the delivery proof.
+
+The agent runs in the tenant's VM, so the tenant can stop it. That ends the evidence
+for later slots, not for anchored ones; the seller watches the agent every slot and
+stops the machine ([decision 47](docs/decisions.md)). A sidecar that the tenant cannot
+stop, and an observer, are [research](docs/research-sidecar-observer.md).
 
 ## Components
 
