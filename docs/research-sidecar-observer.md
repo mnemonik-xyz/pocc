@@ -1,8 +1,13 @@
 # Research: availability evidence that the tenant cannot stop
 
-Status: research, not a decision. Recorded 3 Nov 2026 with decision 47, at the owner's
-request, as a possible future improvement. Nothing here is a design for implementation.
-Decision 47 stays in force until the owner adopts one of these candidates.
+Status: closed, 6 Nov 2026, by decision 49. The owner adopted the first row of candidate
+A: the agent runs in a privileged, attested component inside the confidential machine
+(SEV-SNP VMPL0 or an SVSM), the **enclave agent** of architecture §2a, and it is the only
+evidence authority of the dispute path. The other candidates (a sidecar outside the
+machine, a host agent, every observer variant, a third-party meter) are not pursued. The
+open points of §2 and the questions of §4 that concern candidate A's first row move to the
+Stage 1 prototype; the rest are closed. Recorded 3 Nov 2026 with decision 47. Nothing
+below is a design for implementation.
 
 ## 1. Problem
 
